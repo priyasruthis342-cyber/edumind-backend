@@ -1517,7 +1517,7 @@ router.post('/synthesize-speech', async (req, res) => {
 
 /**
  * POST /api/gemini/extract-image-text
- * Ultra-fast server-side Gemini Vision OCR (<1.5s) for mobile uploads
+ * Ultra-fast server-side Gemini Vision OCR (<1.5s) with high-accuracy handwriting recognition
  */
 router.post('/extract-image-text', async (req, res) => {
   try {
@@ -1540,7 +1540,18 @@ router.post('/extract-image-text', async (req, res) => {
 
     const cleanBase64 = imageBase64.replace(/^data:[^;]+;base64,/, '');
 
-    const promptText = 'Extract all readable study text, syllabus headers, questions, and notes from this textbook page or document accurately. Preserve structural paragraphs, lists, and headings. Respond ONLY with the extracted text, no markdown backticks, no introductory or concluding comments.';
+    const promptText = `You are an expert academic OCR and handwriting transcription engine for university students.
+Carefully inspect this image, which may contain:
+- Student handwritten notes (cursive, ballpoint pen, pencil, quick notebook writing, diagrams with labels, marginal annotations)
+- Printed textbook pages, syllabus outlines, question papers, or digital notes.
+
+TRANSCRIPTION INSTRUCTIONS:
+1. Accurately transcribe and reconstruct all readable handwritten notes, definitions, formulas, questions, code, bullet points, and headings.
+2. Intelligently decipher difficult or messy handwriting using academic and technical context (computer science, engineering, physics, chemistry, mathematics, medicine, school syllabus). Fix obvious pen stroke ambiguities based on technical vocabulary (e.g., 'Operating System', 'Pointer', 'Velocity', 'Linked List', 'Inheritance', 'Algorithm').
+3. NEVER invent random symbols or output isolated garbage characters (e.g., DO NOT output '©', '®', '™', standalone semicolons, random single letters like 'PE ©', 'Ey', '. p='). If a character or line is illegible noise, omit the garbage characters and preserve only coherent words.
+4. If a formula or mathematical expression is present, write it out clearly in plain text or standard math notation (e.g., E = mc^2, O(n log n), V = IR).
+5. Preserve logical paragraphs, numbered lists, bullet points, and section titles.
+6. Output ONLY the clean transcribed study text directly. Do not wrap in markdown code block backticks (no \`\`\`), do not add conversational remarks like "Here is the extracted text:".`;
 
     const contents = [
       {
@@ -1561,7 +1572,7 @@ router.post('/extract-image-text', async (req, res) => {
             contents,
             config: { temperature: 0.1 }
           }),
-          9000,
+          18000,
           `Gemini Vision (${model})`
         );
         if (response && response.text) {
@@ -1579,6 +1590,24 @@ router.post('/extract-image-text', async (req, res) => {
         message: 'Could not extract text from this image.'
       });
     }
+
+    // Post-process to remove any accidental code fences or stray noise
+    extractedText = extractedText
+      .replace(/^```[a-zA-Z]*\n?/, '')
+      .replace(/\n?```$/, '')
+      .trim();
+
+    extractedText = extractedText
+      .split('\n')
+      .filter((line) => {
+        const l = line.trim();
+        // Discard isolated noise lines containing only symbols (like ©, ™, ®, ;, lone punctuation)
+        if (/^[©®™•*#;:=_~^\\/|\-+\s]+$/.test(l)) return false;
+        if (l.length <= 2 && !/[0-9a-zA-Z\u0B80-\u0BFF\u0900-\u097F]/.test(l)) return false;
+        return true;
+      })
+      .join('\n')
+      .trim();
 
     return res.status(200).json({
       success: true,
