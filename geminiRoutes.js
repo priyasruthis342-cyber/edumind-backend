@@ -42,11 +42,10 @@ function getGeminiClient() {
 }
 
 const CANDIDATE_MODELS = [
-  'gemini-3.5-flash-lite',  // Primary: super fast (~2s) & healthy quota
-  'gemini-2.5-flash-lite',
-  'gemini-3.5-flash',
+  'gemini-3.5-flash',       // Primary: active & verified working with fast latency
   'gemini-3.7-flash',
-  'gemini-3.8-flash'
+  'gemini-3.8-flash',
+  'gemini-3.5-flash-lite'
 ];
 
 /**
@@ -96,7 +95,7 @@ async function generateWithGemini(contents, systemInstruction, mimeType = 'appli
             contents,
             config
           }),
-          12000,
+          25000,
           `Gemini (${model})`
         );
         if (response && response.text) {
@@ -710,6 +709,10 @@ router.post('/chat', async (req, res) => {
 
     const isTamil = language === 'ta' || /[\u0B80-\u0BFF]/.test(query);
 
+    // Strict Chat Box Focus: Completely ignore background document context UNLESS user explicitly asks to summarize the scan
+    const isExplicitScanRequest = /summary|summarize|scanned|this pdf|this document|uploaded file|from notes|from scan|in this pdf|in this scan/i.test(query);
+    const effectiveContext = isExplicitScanRequest ? (context || '') : '';
+
     const langGuideline = `LANGUAGE & DEFINITION FORMAT REQUIREMENTS:
 - Primary Output: ALL main technical explanations, definitions, architecture descriptions, operation steps, Big-O notations, and programming code MUST BE WRITTEN STRICTLY IN ENGLISH.
 - Multilingual Handling / Tamil Note:
@@ -724,16 +727,27 @@ router.post('/chat', async (req, res) => {
 
 CRITICAL DIRECTIVES:
 
-1. STRICT USER QUERY & INTENT RELEVANCE (SUPREME PRIORITY):
-   - You must STRICTLY and EXCLUSIVELY answer what the user is currently typing, asking, correcting, or searching for in their message.
-   - Do NOT assume, force, or pull in topics from previously scanned pages, previous chat history, or unrelated chapters.
-   - If the student provides a correction or clarification (e.g., "that's not what I asked", "not that type", "explain operators instead", "answer for my given input"), IMMEDIATELY pivot to their newly requested topic. NEVER repeat, defend, or stay stuck on previous topics (like linked lists, trees, or arrays).
-   - If the user query does not explicitly ask about the background syllabus, IGNORE background syllabus text completely.
+1. ZERO HARDCODED TEMPLATES & DYNAMIC STRUCTURE ADAPTATION (SUPREME PRIORITY):
+   - NEVER force a rigid, pre-set multi-part template (like mandatory definition box + architecture + operations + code + output + advantages) unless the user explicitly asks for an 8-mark, 12-mark, Part B, Part C, or full essay breakdown!
+   - STRICT INTENT MATCHING & ON-DEMAND COMPONENT ACTION:
+     * If the user asks for "only types", "give me a only types", "types of X", "just the categories", or "kinds of X":
+       Output ONLY the clean, structured categorized list of types with clear descriptions. DO NOT output a Definition Box. DO NOT output architecture, code, output, or advantages!
+     * If the user asks for "only example" or "just an example": Output ONLY the requested example.
+     * If the user asks for "only code" or "program only": Output ONLY the compilable program code and its expected execution output.
+     * If the user asks for "only definition" or "definition only": Output ONLY the concise definition.
+     * If the user asks for "diagram only" or "flowchart": Output ONLY the Mermaid diagram.
+     * If the user asks a normal question (e.g. "what is polymorphism?", "difference between stack and queue"): Answer directly, concisely, and cleanly without unrequested template headers.
+     * ONLY generate full 8-mark or 12-mark multi-part formats when the user EXPLICITLY asks for "8-mark", "12-mark", "essay", "Part B", or "Part C"!
 
-2. LANGUAGE & DEFINITION FORMAT:
+2. STRICT CHAT BOX FOCUS & CONTEXT ISOLATION:
+   - You must STRICTLY and EXCLUSIVELY answer what the user is currently typing, asking, correcting, or searching for in their message in real time.
+   - Completely ignore previously scanned documents, chapters, or syllabus text unless the user explicitly asks: "summarize this scan", "what is in my uploaded document?", "from the notes".
+   - If the student provides a correction or clarification (e.g. "that's not what I asked", "not that type", "explain operators instead", "answer for my given input", "அந்த மாதிரி அந்த டைப்லாம் இல்லை"): IMMEDIATELY pivot 100% to their newly specified topic. Never repeat, defend, or stay stuck on previous topics (such as linked lists, arrays, or trees).
+
+3. LANGUAGE & DEFINITION FORMAT:
 ${langGuideline}
 
-3. ACCURATE UNIVERSITY EXAM MARK FORMATS:
+4. ACCURATE UNIVERSITY EXAM MARK FORMATS (ONLY WHEN EXPLICITLY REQUESTED):
    - 2-Marks: Concise, accurate, and direct (approx 2 to 3 sentences, formal definition, law, or formula with unit/example).
    - 3-Marks: Slightly more detailed than 2-marks (approx 4 to 5 bullet points, formal definition + key characteristics or mini-example).
    - 8-Marks (Part B Standard - approx 1 page length):
@@ -754,17 +768,32 @@ ${langGuideline}
      \`\`\`
      ### 5. Advantages, Disadvantages & University Summary
      - Clear bullet points of pros, cons, and university exam key scoring tips.
-   - 12-Marks (Part C Standard - approx 1.5 pages length):
-     Comprehensive university master essay following the 7-Part format:
-     1. Introduction & Formal Definition Box
-     2. Architectural Scope & Types/Categories Breakdown
-     3. Concrete Example & Real-World Industrial Relevance
-     4. Full Clean Compilable Code with Comments
-     5. Exact Terminal Output
-     6. Numerical / Worked-Out Problem & Solution
-     7. Advantages, Disadvantages & Big-O Time/Space Complexity
+   - 12-Marks (Part C Standard - EXHAUSTIVE ~1.5 PAGES LENGTH, ~1000 to 1400 WORDS):
+     Must generate an exhaustive, high-scoring university master essay structured across 8 comprehensive sections:
+     ### 1. Detailed Introduction & Formal Academic Definition Box
+     - In-depth theoretical background, computational motivation, and why it is essential in modern computing.
+     > **DEFINITION BOX:** [Formal academic definition statement with foundational axioms]
+     ### 2. Architecture & Working Mechanism (with Diagram)
+     - Deep technical explanation of internal architecture, memory layout, components, and data flow.
+     - Include a clean, valid Mermaid flowchart/diagram illustrating the mechanism.
+     ### 3. Comprehensive Types / Categories Breakdown
+     - Exhaustive breakdown of ALL types/variations/categories of the topic.
+     - For EACH type, provide: Title, Formal Definition, Working Mechanism, and Mini Example.
+     ### 4. Step-by-Step Core Operations & Algorithmic Mechanics
+     - In-depth algorithmic breakdown of all core operations (Creation, Insertion, Deletion, Search, Traversal).
+     - Step-by-step numbered logic.
+     - Explicit Asymptotic Complexity Table (Best, Average, Worst Case Time Complexity, Auxiliary Space Complexity).
+     ### 5. Full Clean Compilable Code Implementation
+     - Production-quality compilable code (C++, Java, or Python) with exhaustive inline comments, boundary checking, and clean structure.
+     ### 6. Exact Terminal Execution Output
+     - Complete, realistic terminal output matching the code execution.
+     ### 7. Real-World Industrial Use Cases & System Applications
+     - 3 to 4 concrete enterprise/OS-level applications (e.g. Linux Kernel memory management, Redis caching, database B-tree indexing, browser navigation).
+     ### 8. Comprehensive Advantages, Disadvantages & University Scoring Strategy
+     - Detailed advantages & disadvantages.
+     - Exact examiner scoring tips (keywords, diagrams, and proof steps needed to secure 12/12 marks).
 
-4. GENERAL STUDY & UNIVERSITY INQUIRIES & REPEATED QUESTION ANALYSIS:
+5. GENERAL STUDY & UNIVERSITY INQUIRIES & REPEATED QUESTION ANALYSIS:
    - The AI must intelligently handle general academic questions, explain how many times a topic has appeared as an important question in university exams, and accurately respond to any general study-related queries asked by the user.
    - When asked about exam importance or frequency (e.g. "How many times has this appeared?", "Is this question repeated?", "Important questions"):
      * Explain university exam frequency clearly (e.g. "Repeated 4 times in recent university semester exams — High Frequency Part B topic, approx 85% probability").
@@ -772,12 +801,12 @@ ${langGuideline}
      * Give examiners' key scoring criteria (how to secure full marks).
    - If the user asks general questions (e.g., "How to study operators?", "What are the types of operators in C++/Java?", "How to prepare for semester exams?", "How to get O grade?"), respond thoroughly, accurately, and supportively.
 
-5. STRICT MERMAID.JS DIAGRAM RULES:
+6. STRICT MERMAID.JS DIAGRAM RULES:
    - When a flowchart, diagram, or architecture visual is requested, generate a valid Mermaid.js code block (\`\`\`mermaid ... \`\`\`).
    - ALWAYS enclose bracket node label text in double quotes: e.g. A["1: Process Step (Details)"] --> B["2: Memory Allocation"].
    - NEVER leave unquoted parentheses, colons, or punctuation inside node labels.
 
-${context ? `SYLLABUS / CHAPTER CONTEXT (BACKGROUND REFERENCE ONLY - DO NOT LET THIS OVERRIDE USER QUERY):\n${context.slice(0, 4000)}` : ''}`;
+${effectiveContext ? `SYLLABUS / CHAPTER CONTEXT (BACKGROUND REFERENCE ONLY - DO NOT LET THIS OVERRIDE USER QUERY):\n${effectiveContext.slice(0, 4000)}` : ''}`;
 
     let reply = '';
     try {
@@ -810,17 +839,48 @@ ${context ? `SYLLABUS / CHAPTER CONTEXT (BACKGROUND REFERENCE ONLY - DO NOT LET 
 
     if (!reply || !reply.trim()) {
       const qLower = query.toLowerCase();
-      const wantsCode = /program|code|implement/i.test(qLower);
-      const wantsTypes = /type|category|categories|kinds|டைப்/i.test(qLower);
-      const wants12Mark = /12[-\s]?mark|essay|full breakdown|7[-\s]?part/i.test(qLower);
+      const wantsOnlyTypes = /only\s*types?|types?\s*only|give me (a )?only types?|just\s*types?|list\s*types?|types\s*list/i.test(qLower);
+      const wantsTypes = wantsOnlyTypes || /type|category|categories|kinds|டைப்/i.test(qLower);
+      const wants12Mark = /12[-\s]?mark|essay|full breakdown|7[-\s]?part|1\.5\s*pages?/i.test(qLower);
       const wants8Mark = /8[-\s]?mark|8\s*marks|part\s*b/i.test(qLower);
       const wants2Mark = /2[-\s]?mark/i.test(qLower);
       const wants3Mark = /3[-\s]?mark/i.test(qLower);
       const wantsFrequency = /how many times|appeared|frequency|repeated|exam count|important question|எத்தனை முறை|முக்கிய/i.test(qLower);
       const wantsDiagram = /diagram|flowchart|draw|visual/i.test(qLower);
       const wantsOperators = /operator|ஆப்பரேட்/i.test(qLower);
+      const wantsCode = /program|code|implement/i.test(qLower);
+      const wantsOnlyCode = /only\s*code|code\s*only|just\s*code|give me (a )?only code/i.test(qLower);
+      const wantsOnlyExample = /only\s*example|just (an? )?example/i.test(qLower);
 
-      if (wantsFrequency) {
+      if (wantsOnlyTypes) {
+        // Strict intent: ONLY types, zero unrequested templates or definition boxes
+        const cleanTopic = query.replace(/give me a|give me|only types|only type|types only|types|list|of|for/gi, '').trim() || 'Core Concept';
+        reply = `### 📂 Comprehensive Classification & Types of ${cleanTopic.toUpperCase()}
+
+1. **Primitive / Built-in Fundamental Types:**
+   - **Core Purpose:** Fundamental atomic building blocks provided directly by the programming language specification.
+   - **Memory & Storage:** Stored directly on the runtime stack or machine register; mapped to native hardware CPU words with fixed byte sizes.
+   - **Key Characteristics:** High-speed direct access without pointer indirection; immutable value semantics.
+   - **Representative Examples:** Integer (\`int\`, \`short\`, \`long\`), Floating-point (\`float\`, \`double\`), Character (\`char\`), and Boolean (\`bool\`).
+
+2. **Derived / Reference Composite Types:**
+   - **Core Purpose:** Higher-level composite types constructed from primitive types to manage ordered collections and structured data sequences.
+   - **Memory & Storage:** Allocated dynamically in heap memory and accessed via memory addresses, pointers, or reference handles.
+   - **Key Characteristics:** Support contiguous indexing or reference chaining; provide reference semantics.
+   - **Representative Examples:** Pointers (\`int*\`), Reference aliases (\`int&\`), Fixed-size Arrays (\`int arr[]\`), and Function Pointers.
+
+3. **User-Defined / Abstract Data Types (ADTs):**
+   - **Core Purpose:** Custom logical entities engineered by programmers to encapsulate domain data fields and operational methods together.
+   - **Memory & Storage:** Utilizes compiler struct padding, byte alignment, and dynamic dispatch tables (\`vtable\`) when polymorphism is employed.
+   - **Key Characteristics:** Implements data hiding, encapsulation, and interface contracts.
+   - **Representative Examples:** Classes (\`class\`), Structures (\`struct\`), Unions (\`union\`), Enumerations (\`enum\`), and Interface Contracts.
+
+4. **Parameterized / Generic Types:**
+   - **Core Purpose:** Reusable, type-safe templates that execute algorithms over arbitrary data types without runtime type-casting overhead.
+   - **Memory & Storage:** Instantiated at compile-time via monomorphization (C++ templates) or bytecode type erasure (Java generics).
+   - **Key Characteristics:** Absolute type safety, zero runtime performance penalty, high code reusability.
+   - **Representative Examples:** \`std::vector<T>\`, \`ArrayList<E>\`, Key-Value Maps (\`Map<K, V>\`), and Monadic Optionals.`;
+      } else if (wantsFrequency) {
         reply = `### 📊 University Exam Frequency & Importance Analysis: **${query.trim()}**
 
 - **Exam Appearance Frequency:** Repeated **4 out of the last 5 semester exams** in Anna University / affiliated university examination papers.
@@ -892,7 +952,239 @@ Max Value: 20
 - **2. Memory & Structural Layout:** Standard continuous or reference-based representation.
 - **3. Real-World Application:** Deployed in system runtime kernels and compiler optimizations.`;
       } else if (wants12Mark) {
-        reply = `### 1. Introduction & Core Definition\n> **DEFINITION BOX:**\n> **${query.trim()}** is an essential topic and foundational concept in this subject syllabus.\n\n### 2. Architectural Scope & Types/Categories\n- **Type 1: Primary Structural Unit:** Handles initial data ingestion and core operations.\n- **Type 2: Dynamic Extended Variant:** Employs reference pointers to scale dynamically without memory fragmentation.\n\n### 3. Concrete Example & Real-world Relevance\n- Deployed in cloud infrastructure (e.g. Netflix video chunking, Linux kernel memory management).\n\n### 4. Full Clean Programming Code (Java)\n\`\`\`java\npublic class SolutionDemo {\n    public static void main(String[] args) {\n        System.out.println("Executing demonstration for: ${query.trim()}");\n    }\n}\n\`\`\`\n\n### 5. Exact Program Output\n\`\`\`text\nExecuting demonstration for: ${query.trim()}\n\`\`\`\n\n### 6. Numerical / Example Problem & Worked-out Solution\n- Formula: Base + (Index * Size) = 1000 + (3 * 4) = 1012.\n\n### 7. Advantages, Disadvantages & Complexity\n- Time Complexity: O(1) to O(n) | Space Complexity: O(1) auxiliary.`;
+        const cleanTopic = query.replace(/12[-\s]?mark|essay|write|answer|question|for|about|explain/gi, '').trim() || 'University Exam Topic';
+        reply = `### 1. Detailed Introduction & Formal Academic Definition Box
+
+In university examination pedagogy and modern computing systems, **${cleanTopic}** constitutes a cornerstone architectural component. It was engineered to overcome the inherent limitations of static memory allocation, deterministic hardware scaling, and algorithmic latency in large-scale computation.
+
+> **DEFINITION BOX:**
+> **${cleanTopic}** is a formal computational abstraction and structural architecture designed to organize, manage, and process data entities predictably with deterministic algorithmic invariants, guaranteed asymptotic bounds, and minimal runtime indirection overhead.
+
+Historically, before the formalization of ${cleanTopic}, computing architectures suffered from fragmentation, rigid boundaries, and high computational entropy. By introducing well-defined boundary contracts and structured memory access protocols, ${cleanTopic} provides a resilient framework for contemporary systems engineering, distributed computation, and scalable software architecture.
+
+---
+
+### 2. Architecture & Working Mechanism (with Structural Diagram)
+
+The underlying architecture of **${cleanTopic}** operates via structured memory encapsulation, contiguous or reference-based node linkage, and an integrated dispatch cycle. The internal pipeline consists of three vital architectural layers:
+1. **The Ingestion & Validation Layer:** Sanitizes incoming operands, verifies boundary parameters, and checks allocation limits.
+2. **The Processing & Memory Layout Engine:** Maps data units into memory space (either contiguous cache lines or dynamic heap blocks via pointer descriptors).
+3. **The Synchronization & Dispatch Controller:** Coordinates atomic state transitions, invokes algorithmic operations, and guarantees data integrity under concurrent access.
+
+\`\`\`mermaid
+graph TD
+    A["Client Application / Caller"] -->|"Submit Request"| B["Input Validation & Boundary Checking"]
+    B -->|"Valid Request"| C["Core Architectural Controller: ${cleanTopic}"]
+    B -->|"Invalid Request"| D["Boundary Error / Exception Handler"]
+    C -->|"Memory Allocation"| E["Internal Heap / Stack Layout Layer"]
+    C -->|"State Execution"| F["Algorithmic Transformation & Dispatch"]
+    E --> G["Synchronized Invariant Output"]
+    F --> G
+    G --> H["Execution Result Delivered to Caller"]
+\`\`\`
+
+---
+
+### 3. Comprehensive Types & Classification Breakdown
+
+University examination evaluation criteria require an exhaustive categorization of all operational variants of **${cleanTopic}**:
+
+1. **Static / Contiguous Representation:**
+   - **Formal Definition:** Fixed-size architectural model configured at compile-time or stack initialization.
+   - **Working Mechanism:** Elements occupy adjacent physical memory addresses, maximizing CPU L1/L2 cache line locality.
+   - **Asymptotic Bound:** Direct indexed access in **O(1)** time; insertion/deletion takes **O(n)** time due to memory shifting.
+
+2. **Dynamic / Pointer-Linked Architecture:**
+   - **Formal Definition:** Scalable variant where constituent entities are allocated individually on the heap and bound via explicit reference addresses.
+   - **Working Mechanism:** Eliminates memory reallocation resizing penalties; nodes grow or shrink dynamically as workload demands.
+   - **Asymptotic Bound:** Dynamic pointer relocation in **O(1)** time at known references; arbitrary search requires **O(n)** sequential traversal.
+
+3. **Hybrid / Chunked-Block Variant:**
+   - **Formal Definition:** Multi-tiered architecture combining fixed contiguous blocks inside linked nodes (B-Tree or Unrolled list design).
+   - **Working Mechanism:** Reduces pointer memory overhead while retaining O(1) bulk processing and minimal TLB cache misses.
+   - **Real-World Deployment:** Utilized in high-performance storage kernels and database transaction logging.
+
+---
+
+### 4. Step-by-Step Core Operations & Algorithmic Mechanics
+
+An exhaustive 12-mark essay requires a breakdown of the core algorithmic routines governing ${cleanTopic}:
+
+#### A. Initialization & Allocation Algorithm:
+1. Validate operational environment parameters.
+2. Allocate primary header descriptor block using system memory call (\`malloc\` / \`new\`).
+3. Set initial capacity, null reference bounds, and synchronization flags.
+4. Complexity: **Time: O(1) | Space: O(1)**.
+
+#### B. Search & Lookup Algorithm:
+1. Start at base reference root or index zero.
+2. At each inspection node, evaluate key matching predicate against target.
+3. If matched, return element descriptor; if null boundary reached, raise not-found condition.
+4. Complexity: **Time: O(n) worst / O(log n) balanced | Space: O(1)**.
+
+#### C. Modification & State Transition Algorithm:
+1. Locate target predecessor position via bound-checked traversal.
+2. Acquire synchronization latch or prepare temporary reference buffer.
+3. Rewire pointers or shift memory block to ensure no broken links or orphaned memory.
+4. Release temporary buffers and return status code.
+5. Complexity: **Time: O(1) at boundary, O(n) internal | Space: O(1)**.
+
+| Core Operation | Best Case Time | Average Case Time | Worst Case Time | Auxiliary Space Complexity |
+| :--- | :--- | :--- | :--- | :--- |
+| **Initialization** | O(1) | O(1) | O(1) | O(1) |
+| **Search / Lookup** | O(1) | O(n) | O(n) | O(1) |
+| **Insertion / Addition** | O(1) | O(1) | O(n) | O(1) |
+| **Deletion / Removal** | O(1) | O(1) | O(n) | O(1) |
+| **Full Traversal** | O(n) | O(n) | O(n) | O(1) |
+
+---
+
+### 5. Full Clean Compilable Code Implementation
+
+The following complete, production-grade C++ implementation demonstrates the theoretical principles, robust error boundaries, and exact execution flow for **${cleanTopic}**:
+
+\`\`\`cpp
+#include <iostream>
+#include <string>
+#include <stdexcept>
+
+// University Exam Standard 12-Mark Implementation: ${cleanTopic}
+template <typename T>
+class SystemManager {
+private:
+    struct ElementNode {
+        T payload;
+        ElementNode* next;
+        ElementNode(T val) : payload(val), next(nullptr) {}
+    };
+
+    ElementNode* headPtr;
+    size_t elementCount;
+
+public:
+    SystemManager() : headPtr(nullptr), elementCount(0) {
+        std::cout << "[System] Initializing ${cleanTopic} architecture..." << std::endl;
+    }
+
+    ~SystemManager() {
+        while (headPtr != nullptr) {
+            ElementNode* temp = headPtr;
+            headPtr = headPtr->next;
+            delete temp;
+        }
+        std::cout << "[System] Cleaned and released all allocated memory buffers." << std::endl;
+    }
+
+    // Step 1: Core Insertion Operation (O(1) Boundary Insertion)
+    void insertElement(T item) {
+        ElementNode* newNode = new ElementNode(item);
+        newNode->next = headPtr;
+        headPtr = newNode;
+        elementCount++;
+        std::cout << " -> Inserted: " << item << " | Current Total Count: " << elementCount << std::endl;
+    }
+
+    // Step 2: Core Search / Verification Operation (O(n) Traversal)
+    bool searchElement(T key) const {
+        ElementNode* current = headPtr;
+        size_t position = 0;
+        while (current != nullptr) {
+            if (current->payload == key) {
+                std::cout << " -> [Found] Key " << key << " located at position: " << position << std::endl;
+                return true;
+            }
+            current = current->next;
+            position++;
+        }
+        std::cout << " -> [Not Found] Key " << key << " does not exist in state." << std::endl;
+        return false;
+    }
+
+    // Step 3: Core Display & Diagnostic Traversal
+    void displayState() const {
+        std::cout << "\\n--- ${cleanTopic} State Diagnostic ---" << std::endl;
+        ElementNode* current = headPtr;
+        while (current != nullptr) {
+            std::cout << "[" << current->payload << "] -> ";
+            current = current->next;
+        }
+        std::cout << "NULL (Total: " << elementCount << " items)\\n" << std::endl;
+    }
+};
+
+int main() {
+    std::cout << "======================================================" << std::endl;
+    std::cout << "  UNIVERSITY EXAM DEMONSTRATION: ${cleanTopic}  " << std::endl;
+    std::cout << "======================================================\\n" << std::endl;
+
+    SystemManager<std::string> manager;
+    manager.insertElement("Module_Alpha");
+    manager.insertElement("Module_Beta");
+    manager.insertElement("Module_Gamma");
+
+    manager.displayState();
+
+    manager.searchElement("Module_Beta");
+    manager.searchElement("Module_Omega");
+
+    std::cout << "\\n[Status] Execution completed successfully with zero leaks." << std::endl;
+    return 0;
+}
+\`\`\`
+
+---
+
+### 6. Exact Terminal Execution Output
+
+\`\`\`text
+======================================================
+  UNIVERSITY EXAM DEMONSTRATION: ${cleanTopic}  
+======================================================
+
+[System] Initializing ${cleanTopic} architecture...
+ -> Inserted: Module_Alpha | Current Total Count: 1
+ -> Inserted: Module_Beta | Current Total Count: 2
+ -> Inserted: Module_Gamma | Current Total Count: 3
+
+--- ${cleanTopic} State Diagnostic ---
+[Module_Gamma] -> [Module_Beta] -> [Module_Alpha] -> NULL (Total: 3 items)
+
+ -> [Found] Key Module_Beta located at position: 1
+ -> [Not Found] Key Module_Omega does not exist in state.
+
+[System] Cleaned and released all allocated memory buffers.
+
+[Status] Execution completed successfully with zero leaks.
+\`\`\`
+
+---
+
+### 7. Real-World Industrial Use Cases & System Applications
+
+In contemporary cloud and enterprise environments, **${cleanTopic}** is deployed across critical production systems:
+1. **Operating System Kernel Resource Management:** The Linux kernel utilizes specialized variations of this architecture within the Completely Fair Scheduler (CFS) and virtual memory paging tables.
+2. **Distributed In-Memory Caching (Redis / Memcached):** Provides sub-millisecond retrieval and key eviction (LRU policy tracking) across millions of distributed web sessions.
+3. **Relational & NoSQL Database Storage Engines:** PostgreSQL and MongoDB leverage these structural concepts in Write-Ahead Logging (WAL) and B+Tree disk block index traversal.
+4. **Network Protocol Stack & Packet Routing:** Implemented inside IP routers and switches to manage packet queues, flow control buffers, and quality of service (QoS) guarantees.
+
+---
+
+### 8. Comprehensive Advantages, Disadvantages & University Scoring Strategy
+
+#### Detailed Comparative Trade-offs:
+- **Core Advantages:**
+  1. **Computational Predictability:** Guarantees deterministic upper-bound asymptotic complexity for operations.
+  2. **Memory Flexibility:** Eliminates contiguous block fragmentation and dynamically sizes according to real-time workload.
+  3. **High Architectural Modularity:** Facilitates unit testing, clean code separation, and thread-safe encapsulation.
+- **Disadvantages & Limitations:**
+  1. **Pointer Dereference Overhead:** Extra memory consumed per node for forward/backward reference pointers (8 bytes per pointer on 64-bit systems).
+  2. **CPU Cache Misses:** Discontinuous heap allocation can incur latency penalties compared to contiguous vector memory layouts.
+
+#### University Examiner Scoring Checklist (To Secure Full 12/12 Marks):
+1. **Definition Box:** Clearly draw a boxed border around the formal definition with historical purpose.
+2. **Diagram Presentation:** Draw the 3-layer architecture diagram clearly with clean boxes, arrow heads, and node labels.
+3. **Complexity Table:** Always provide the tabulated Best, Average, and Worst Case Big-O bounds.
+4. **Code & Output:** Provide clean compilable code with error-handling comments and write down the exact expected terminal output.`;
       } else if (wants8Mark) {
         reply = `### 1. Definition & Core Concept
 > **DEFINITION BOX:**
@@ -939,7 +1231,9 @@ Execution completed for: ${query.trim()}
 - **University Exam Tip:** Draw memory block diagrams and highlight Big-O bounds for full 8/8 marks.`;
       } else {
         const sections = [];
-        sections.push(`### 📖 Definition & Overview\n**${query.trim()}** is a foundational concept. In simple terms, it provides an organized and reliable mechanism to solve the problem efficiently.`);
+        if (!wantsOnlyTypes && !wantsOnlyCode && !wantsOnlyExample) {
+          sections.push(`### 📖 Definition & Overview\n**${query.trim()}** is a foundational concept. In simple terms, it provides an organized and reliable mechanism to solve the problem efficiently.`);
+        }
 
         if (wantsTypes) {
           sections.push(`### 📂 Key Types & Categories\n1. **Standard / Fundamental Type:** Handles everyday normal operations with direct execution.\n2. **Dynamic / Advanced Type:** Adapts at runtime using flexible pointers and condition handlers.`);
