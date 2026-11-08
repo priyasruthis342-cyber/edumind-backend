@@ -1,0 +1,963 @@
+// ─────────────────────────────────────────────────────────────
+// geminiRoutes.js — Google Gemini AI Router for EduMind
+// Powered by @google/genai SDK
+// Anna University Exam Standard + Natural Spoken Tamil Engine
+// ─────────────────────────────────────────────────────────────
+const express = require('express');
+const router = express.Router();
+const { GoogleGenAI } = require('@google/genai');
+const Groq = require('groq-sdk');
+
+let groqClient = null;
+if (process.env.GROQ_API_KEY) {
+  try {
+    groqClient = new Groq({ apiKey: process.env.GROQ_API_KEY });
+  } catch (e) {
+    console.warn('Groq client init warning:', e.message);
+  }
+}
+
+let MsEdgeTTS, OUTPUT_FORMAT;
+try {
+  const edgeTts = require('msedge-tts');
+  MsEdgeTTS = edgeTts.MsEdgeTTS;
+  OUTPUT_FORMAT = edgeTts.OUTPUT_FORMAT;
+} catch (e) {
+  console.warn('msedge-tts module not loaded:', e.message);
+}
+
+let aiClient = null;
+function getGeminiClient() {
+  const key = process.env.GEMINI_API_KEY;
+  if (!key) return null;
+  if (!aiClient) {
+    try {
+      aiClient = new GoogleGenAI({ apiKey: key });
+    } catch (e) {
+      console.warn('GoogleGenAI initialization warning:', e.message);
+      return null;
+    }
+  }
+  return aiClient;
+}
+
+const CANDIDATE_MODELS = [
+  'gemini-3.5-flash-lite',  // Primary: super fast (~2s) & healthy quota
+  'gemini-2.5-flash-lite',
+  'gemini-3.5-flash',
+  'gemini-3.7-flash',
+  'gemini-3.8-flash'
+];
+
+/**
+ * Promise timeout safety wrapper
+ */
+function withTimeout(promise, ms = 8000, label = 'Operation') {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms)
+    )
+  ]);
+}
+
+/**
+ * Cleans messy OCR artifacts (||, |, «, », ~N, excessive punctuation)
+ */
+function cleanOcrArtifacts(raw) {
+  if (!raw || typeof raw !== 'string') return '';
+  return raw
+    .replace(/\|\|+/g, '. ')
+    .replace(/[|~«»+]/g, ' ')
+    .replace(/^[#*\-•\s]+/gm, '')
+    .replace(/\s+/g, ' ')
+    .replace(/\.{2,}/g, '.')
+    .trim();
+}
+
+/**
+ * Resilient helper to call Gemini with multi-model cascade, timeout & Groq fallback
+ */
+async function generateWithGemini(contents, systemInstruction, mimeType = 'application/json') {
+  const config = {
+    ...(mimeType ? { responseMimeType: mimeType } : {}),
+    ...(systemInstruction ? { systemInstruction } : {})
+  };
+  let lastError = null;
+
+  // 1. Try Gemini candidate models with 12-second timeout per model
+  const client = getGeminiClient();
+  if (client) {
+    for (const model of CANDIDATE_MODELS) {
+      try {
+        const response = await withTimeout(
+          client.models.generateContent({
+            model,
+            contents,
+            config
+          }),
+          12000,
+          `Gemini (${model})`
+        );
+        if (response && response.text) {
+          return response.text;
+        }
+      } catch (err) {
+        console.warn(`Model ${model} unavailable (${err.message}). Trying next candidate...`);
+        lastError = err;
+      }
+    }
+  }
+
+  // 2. High-speed Groq fallback (openai/gpt-oss-120b) if Gemini is rate limited or unavailable
+  if (groqClient) {
+    try {
+      console.log('⚡ Gemini busy/rate-limited. Switching to Groq openai/gpt-oss-120b fallback...');
+      const groqPrompt = systemInstruction
+        ? `${systemInstruction}\n\n${mimeType === 'application/json' ? 'Strict requirement: Output only a valid parseable JSON object matching the required schema.\n\n' : ''}${contents}`
+        : contents;
+
+      const completion = await withTimeout(
+        groqClient.chat.completions.create({
+          model: 'openai/gpt-oss-120b',
+          messages: [{ role: 'user', content: groqPrompt }],
+          ...(mimeType === 'application/json' ? { response_format: { type: 'json_object' } } : {})
+        }),
+        14000,
+        'Groq fallback'
+      );
+      const groqText = completion.choices[0]?.message?.content;
+      if (groqText) {
+        console.log('✅ Groq fallback generated response successfully!');
+        return groqText;
+      }
+    } catch (groqErr) {
+      console.warn('Groq fallback failed:', groqErr.message);
+    }
+  }
+
+  throw lastError || new Error('All AI models are temporarily busy. Please retry.');
+}
+
+/**
+ * Robust JSON parser that repairs unescaped multi-line code blocks and strings
+ */
+function fixJsonString(str) {
+  let inString = false;
+  let result = '';
+  for (let i = 0; i < str.length; i++) {
+    const char = str[i];
+    const prev = i > 0 ? str[i - 1] : '';
+    if (char === '"' && prev !== '\\') {
+      inString = !inString;
+      result += char;
+    } else if (inString && (char === '\n' || char === '\r')) {
+      result += (char === '\n' ? '\\n' : '');
+    } else {
+      result += char;
+    }
+  }
+  return result;
+}
+
+function safeParseJson(raw) {
+  let cleaned = raw
+    .replace(/^```json\s*/i, '')
+    .replace(/^```\s*/i, '')
+    .replace(/```\s*$/i, '')
+    .trim();
+
+  try {
+    return JSON.parse(cleaned);
+  } catch (e1) {
+    try {
+      const JSON5 = require('json5');
+      return JSON5.parse(cleaned);
+    } catch (e2) {}
+
+    try {
+      return JSON.parse(fixJsonString(cleaned));
+    } catch (e3) {}
+
+    try {
+      const match = cleaned.match(/\{[\s\S]*\}/);
+      if (match) {
+        try {
+          const JSON5 = require('json5');
+          return JSON5.parse(match[0]);
+        } catch (e4) {
+          return JSON.parse(fixJsonString(match[0]));
+        }
+      }
+    } catch (e5) {}
+
+    throw e1;
+  }
+}
+
+/**
+ * POST /api/gemini/exam-qa
+ * Analyzes syllabus/theory PDF text and generates 1-mark, 2-mark, 5-mark, and 12-mark
+ * university exam-standard questions and in-depth answers (Anna University pattern).
+ * Supports English ('en') and Natural Conversational Tamil ('ta').
+ */
+router.post('/exam-qa', async (req, res) => {
+  try {
+    const { prompt, language = 'en' } = req.body;
+
+    if (!prompt || typeof prompt !== 'string' || !prompt.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: 'prompt is required and must be a non-empty string containing the PDF text.'
+      });
+    }
+
+    const isTamil = language === 'ta';
+
+    const langVoiceGuideline = isTamil
+      ? `LANGUAGE REQUIREMENT: TAMIL (இயல்பான பேச்சுத் தமிழ் & தெளிவான கல்வித் தமிழ்)
+- Use natural, modern conversational Tamil (இயல்பான தமிழ் நடை) that students easily understand.
+- CRITICAL FOR VOICE / TTS: Do NOT use archaic, stiff, or obsolete literary words (avoid outdated words like 'இயற்றுக', 'பகர்க', 'ஆற்றுப்படுத்துக').
+- Phrasing must flow naturally and rhythmically so browser Text-To-Speech (TTS) reads it smoothly without robotic glitches or awkward pronunciations.
+- Keep standard technical terms clearly identifiable alongside Tamil (e.g., "CPU Scheduling (செயல்முறை திட்டமிடல்)", "Primary Memory (முதன்மை நினைவகம்)", "Polymorphism (பல்லுருவாக்கம்)").`
+      : `LANGUAGE REQUIREMENT: ENGLISH
+- Professional, clear, academic Indian University standard (Anna University / VTU / JNTU pattern).
+- Crisp definitions, robust technical terminology, clear derivations, and structured bulleted explanations.`;
+
+    const systemInstruction = `You are EduMind Gemini AI, a distinguished Anna University senior professor, chief examiner, and textbook author.
+Analyze the provided study material / syllabus / theory PDF text thoroughly.
+Generate an exhaustive exam question bank with detailed, high-scoring answers formatted exactly to university paper presentation standards.
+
+${langVoiceGuideline}
+
+STRICT ANNA UNIVERSITY EXAM PATTERN & ANSWER PRESENTATION GUIDELINES:
+1. 2-MARK QUESTIONS (Part A standard - 5 Questions):
+   - Strict definition + 2-3 essential key points or formula with unit/example. No fluff.
+   - Mark weightage: 2 stars (⭐⭐) with priority tag.
+
+2. 3-MARK QUESTIONS (Part A / B conceptual bridge - 4 Questions):
+   - Core definition + 3 distinct key points, characteristics, applications or short diagram note.
+   - Mark weightage: 2 stars (⭐⭐) with priority tag.
+
+3. 8-MARK STRUCTURED ESSAY QUESTIONS (Part B University Standard - 4 Questions):
+   - Comprehensive structured answers (~1 page equivalent of detail each) containing:
+     * Highlighted [DEFINITION BOX: ...] statement.
+     * 5-6 detailed bullet points explaining the core mechanism or architecture.
+     * Concrete real-world industrial example and technical breakdown.
+     * Clean compilable code snippet with expected output OR an exam diagram flow.
+     * Key advantages, disadvantages, and usage summary.
+   - Mark weightage: 3 stars (⭐⭐⭐) with priority tag.
+
+4. 12-MARK COMPREHENSIVE UNIVERSITY ESSAY QUESTIONS (Part C full 12/12 scoring model - 2 Questions):
+   - Exhaustive university essay standard (~2 to 2.5 pages equivalent of detail each) strictly following the 7-Part University Exam Sheet Standard:
+     • Section 1: Introduction & Core Definition (Detailed academic background and [DEFINITION BOX: ...])
+     • Section 2: Architectural Scope & Types/Categories (Detailed breakdown of ALL types with title, definition, and mechanism for each type + [Diagram Description: ...])
+     • Section 3: Concrete Example & Real-world Relevance (Industrial applications: Netflix, Linux Kernel, Database engines, etc.)
+     • Section 4: Full Clean Programming Code (C++/Java/Python compilable clean code)
+     • Section 5: Exact Program Output (Execution terminal output)
+     • Section 6: Numerical / Worked-out Example Problem (Problem statement, formula, step-by-step substitution, and solution)
+     • Section 7: Advantages, Disadvantages & Time/Space Complexity (Pros, cons, Big-O Time & Space complexity)
+   - Mark weightage: 3 stars (⭐⭐⭐) with priority tag.
+
+TOTAL QUESTIONS REQUIRED: Exactly 15 high-yield exam questions (5 x 2-mark, 4 x 3-mark, 4 x 8-mark, 2 x 12-mark).
+
+OUTPUT FORMAT:
+Return ONLY a valid, parseable JSON object without markdown fences or backticks.
+Schema:
+{
+  "chapter_title": "Detected Title of Chapter or Subject",
+  "summary": "Comprehensive 3-4 sentence overview of core concepts covered in the text.",
+  "questions_2mark": [
+    { "id": 1, "question": "...", "answer": "...", "importance_stars": 2, "priority_tag": "⭐⭐ Essential Part A Definition" },
+    { "id": 2, "question": "...", "answer": "...", "importance_stars": 3, "priority_tag": "⭐⭐⭐ High Frequency Exam Topic" },
+    { "id": 3, "question": "...", "answer": "...", "importance_stars": 2, "priority_tag": "⭐⭐ Essential Part A Definition" },
+    { "id": 4, "question": "...", "answer": "...", "importance_stars": 2, "priority_tag": "⭐⭐ Core Syllabus Formula" },
+    { "id": 5, "question": "...", "answer": "...", "importance_stars": 3, "priority_tag": "⭐⭐⭐ Frequently Repeated Topic" }
+  ],
+  "questions_3mark": [
+    { "id": 1, "question": "...", "answer": "...", "importance_stars": 2, "priority_tag": "⭐⭐ Conceptual Bridge Question" },
+    { "id": 2, "question": "...", "answer": "...", "importance_stars": 3, "priority_tag": "⭐⭐⭐ Repeated University Question" },
+    { "id": 3, "question": "...", "answer": "...", "importance_stars": 2, "priority_tag": "⭐⭐ Key Characteristics" },
+    { "id": 4, "question": "...", "answer": "...", "importance_stars": 2, "priority_tag": "⭐⭐ Practical Application Note" }
+  ],
+  "questions_8mark": [
+    { "id": 1, "question": "...", "answer": "...", "importance_stars": 3, "priority_tag": "⭐⭐⭐ Core Part B University Question" },
+    { "id": 2, "question": "...", "answer": "...", "importance_stars": 3, "priority_tag": "⭐⭐⭐ High-Scoring Structured Essay" },
+    { "id": 3, "question": "...", "answer": "...", "importance_stars": 3, "priority_tag": "⭐⭐⭐ Repeated Analytical Problem" },
+    { "id": 4, "question": "...", "answer": "...", "importance_stars": 3, "priority_tag": "⭐⭐⭐ Architectural Mechanism" }
+  ],
+  "questions_12mark": [
+    {
+      "id": 1,
+      "question": "Comprehensive 12-mark university exam essay question on core topic?",
+      "importance_stars": 3,
+      "priority_tag": "⭐⭐⭐ High Frequency University Master Essay (12/12)",
+      "answer": {
+        "introduction": "1. Introduction & Core Definition: Detailed background and [DEFINITION BOX: ...] statement.",
+        "architecture_types": "2. Architectural Scope & Types/Categories: Detailed breakdown with bold titles, definitions for each type, and [Diagram Description: System Architecture Flow].",
+        "concrete_example": "3. Concrete Example & Real-world Relevance: Real-world industrial context and use-cases.",
+        "program_code": "// 4. Full Clean Programming Code (Java/C++)\npublic class Solution {\n    // Code...\n}",
+        "program_output": "5. Exact Program Output:\n[Execution Terminal Output]",
+        "numerical_problem": "6. Numerical/Example Problem & Worked-out Solution: Problem statement, formula, calculation steps, and final result.",
+        "tradeoffs_complexity": "7. Advantages, Disadvantages & Time/Space Complexity: Advantages, disadvantages, Time: O(...) and Space: O(...)"
+      }
+    },
+    {
+      "id": 2,
+      "question": "Second comprehensive 12-mark university exam essay question on secondary topic/algorithm?",
+      "importance_stars": 3,
+      "priority_tag": "⭐⭐⭐ High Frequency University Master Essay (12/12)",
+      "answer": {
+        "introduction": "1. Introduction & Core Definition: Detailed background and [DEFINITION BOX: ...] statement.",
+        "architecture_types": "2. Architectural Scope & Types/Categories: Detailed breakdown with bold titles, definitions for each type, and [Diagram Description: System Architecture Flow].",
+        "concrete_example": "3. Concrete Example & Real-world Relevance: Real-world industrial context and use-cases.",
+        "program_code": "// 4. Full Clean Programming Code (Java/C++)\npublic class Solution2 {\n    // Code...\n}",
+        "program_output": "5. Exact Program Output:\n[Execution Terminal Output]",
+        "numerical_problem": "6. Numerical/Example Problem & Worked-out Solution: Problem statement, formula, calculation steps, and final result.",
+        "tradeoffs_complexity": "7. Advantages, Disadvantages & Time/Space Complexity: Advantages, disadvantages, Time: O(...) and Space: O(...)"
+      }
+    }
+  ]
+};`;
+
+    const rawText = await generateWithGemini(
+      `Study Material / PDF Text:\n\n${prompt.trim()}`,
+      systemInstruction
+    );
+
+    let parsed;
+    try {
+      parsed = safeParseJson(rawText);
+    } catch (parseErr) {
+      console.warn('Failed to parse Gemini JSON output. Falling back to local syllabus generator:', parseErr.message);
+      const localData = generateLocalExamQA(prompt, language);
+      return res.status(200).json({
+        success: true,
+        provider: 'local-resilient',
+        ...localData
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      provider: 'google-gemini',
+      chapter_title: parsed.chapter_title || 'Syllabus & Theory Study',
+      summary: parsed.summary || '',
+      questions_2mark: parsed.questions_2mark || [],
+      questions_3mark: parsed.questions_3mark || parsed.questions_1mark || [],
+      questions_5mark: parsed.questions_8mark || parsed.questions_5mark || [],
+      questions_8mark: parsed.questions_8mark || parsed.questions_5mark || [],
+      questions_12mark: parsed.questions_12mark || []
+    });
+
+  } catch (err) {
+    console.warn('Gemini Exam Q&A fallback to local university question generator:', err.message);
+    const localData = generateLocalExamQA(req.body?.prompt || '', req.body?.language || 'en');
+    return res.status(200).json({
+      success: true,
+      provider: 'local-resilient',
+      ...localData
+    });
+  }
+});
+
+/**
+ * Resilient fallback generator for Anna University Exam Q&A.
+ * Guarantees zero 500 errors if cloud AI models hit quota limits.
+ */
+function generateLocalExamQA(prompt, language = 'en') {
+  const isTamil = language === 'ta';
+  const cleanPrompt = cleanOcrArtifacts(prompt);
+  const segments = cleanPrompt
+    .split(/[\r\n,;:\-]+/)
+    .map(s => s.trim())
+    .filter(s => s.length > 3 && !/^(page|unit|chapter|\d+)/i.test(s));
+
+  const title = segments[0] || 'Syllabus & Course Study';
+  const topic1 = segments[1] || segments[0] || 'Core Operational Concepts';
+  const topic2 = segments[2] || 'Key Architectural Principles';
+  const topic3 = segments[3] || 'Algorithmic Complexity & Bounds';
+  const topic4 = segments[4] || 'Practical Systems Implementation';
+
+  return {
+    chapter_title: title,
+    summary: isTamil
+      ? `${title} பாடத்திட்டத்தின் முக்கியக் கருத்துக்கள், கொள்கைகள் மற்றும் தேர்வு வினா-விடைகள் கீழே விரிவாகக் கொடுக்கப்பட்டுள்ளன.`
+      : `Comprehensive syllabus analysis of ${title}, covering essential definitions, core operational principles, structured 8-mark breakdowns, and exhaustive 12-mark university examination essays.`,
+    questions_2mark: [
+      {
+        id: 1,
+        question: isTamil ? `${topic1} என்றால் என்ன?` : `Define ${topic1}.`,
+        importance_stars: 2,
+        priority_tag: '⭐⭐ Essential Part A Definition',
+        answer: isTamil
+          ? `${topic1} என்பது பாடத்திட்டத்தின் அடிப்படையான ஒரு முக்கிய கருத்தாகும். இது முறையான அமைப்பில் தொடக்க செயலாக்கத்தை மேற்கொள்ள வடிவமைக்கப்பட்டுள்ளது.`
+          : `${topic1} is a fundamental computational abstraction designed to provide structured operations, deterministic memory allocation, and organized state transitions.`
+      },
+      {
+        id: 2,
+        question: isTamil ? `${topic2} என்பதன் முதன்மை நோக்கத்தைக் குறிப்பிடுக.` : `State the primary purpose of ${topic2}.`,
+        importance_stars: 3,
+        priority_tag: '⭐⭐⭐ High Frequency Exam Topic',
+        answer: isTamil
+          ? `${topic2} அமைப்பின் செயல்திறன் மற்றும் வளங்களின் பயன்பாட்டை உகந்ததாக்க உதவுகிறது.`
+          : `${topic2} optimizes operational throughput, eliminates resource redundancy, and establishes clear algorithmic boundaries.`
+      },
+      {
+        id: 3,
+        question: isTamil ? `${topic3} கால சிக்கல்தன்மையின் முக்கியத்துவம் என்ன?` : `What is the significance of ${topic3}?`,
+        importance_stars: 2,
+        priority_tag: '⭐⭐ Essential Part A Definition',
+        answer: isTamil
+          ? `இது கணினி அமைப்பின் இயங்கும் வேகத்தையும் வள நுகர்வையும் துல்லியமாகக் கணக்கிட உதவுகிறது.`
+          : `It establishes upper (Big-O) and lower asymptotic bounds, guaranteeing predictable execution latency under peak transaction loads.`
+      },
+      {
+        id: 4,
+        question: isTamil ? `${topic4} நடைமுறை பயன்பாடு ஒன்றைத் தருக.` : `Give a practical real-world application of ${topic4}.`,
+        importance_stars: 2,
+        priority_tag: '⭐⭐ Core Syllabus Application',
+        answer: isTamil
+          ? `லினக்ஸ் இயங்குதள நினைவக மேலாண்மை மற்றும் கிளவுட் சேமிப்பக அமைப்புகளில் பயன்படுகிறது.`
+          : `Implemented in cloud-scale storage indexing, Linux kernel memory management, and high-frequency transaction engines.`
+      },
+      {
+        id: 5,
+        question: isTamil ? `${title} அமைப்பின் முதன்மை நன்மை என்ன?` : `State the key architectural advantage of ${title}.`,
+        importance_stars: 3,
+        priority_tag: '⭐⭐⭐ Frequently Repeated Topic',
+        answer: isTamil
+          ? `அதிவேக நினைவக அணுகல், எளிய பராமரிப்பு மற்றும் கணிக்கக்கூடிய தரவு ஓட்டத்தை உறுதி செய்கிறது.`
+          : `Ensures deterministic memory layout, modular maintainability, and sub-millisecond data retrieval efficiency.`
+      }
+    ],
+    questions_3mark: [
+      {
+        id: 1,
+        question: isTamil ? `${topic1} என்பதன் மூன்று முக்கியப் பண்புகளை பட்டியலிடுக.` : `List three key characteristics of ${topic1}.`,
+        importance_stars: 2,
+        priority_tag: '⭐⭐ Conceptual Bridge Question',
+        answer: isTamil
+          ? `1. நேரடி மற்றும் வேகமான அணுகல்.\n2. குறைந்த நினைவக விரயம்.\n3. எளிமையான பராமரிப்பு முறை.`
+          : `1. Deterministic direct access and bounded execution time.\n2. Minimal memory overhead and structured boundaries.\n3. High modularity and maintainability.`
+      },
+      {
+        id: 2,
+        question: isTamil ? `${topic2} மற்றும் ${topic3} இடையிலான வேறுபாடுகளைக் குறிப்பிடுக.` : `Distinguish between ${topic2} and ${topic3}.`,
+        importance_stars: 3,
+        priority_tag: '⭐⭐⭐ Repeated University Question',
+        answer: isTamil
+          ? `1. ${topic2} கட்டமைப்பு நிலைத்தன்மையை வழங்குகிறது; ${topic3} கணக்கீட்டு செயல்திறனைக் கணக்கிடுகிறது.\n2. ஒன்று வள ஒதுக்கீட்டிலும், மற்றொன்று நேர அளவீட்டிலும் கவனம் செலுத்துகிறது.`
+          : `1. ${topic2} governs structural integrity and resource encapsulation, whereas ${topic3} defines algorithmic bounds.\n2. ${topic2} is compile-time deterministic, whereas ${topic3} addresses runtime asymptotic scale.`
+      },
+      {
+        id: 3,
+        question: isTamil ? `${topic4} பயன்பாடுகளை விளக்குக.` : `Mention the key applications of ${topic4}.`,
+        importance_stars: 2,
+        priority_tag: '⭐⭐ Key Characteristics',
+        answer: isTamil
+          ? `கணினி நினைவக மேலாண்மை, தரவுத் தேடல் அமைப்புகள் மற்றும் நிஜ உலக மென்பொருள் கட்டமைப்புகளில் பயன்படுகிறது.`
+          : `Widely implemented in operating system memory management, real-time transaction processing, and enterprise data models.`
+      },
+      {
+        id: 4,
+        question: isTamil ? `${title} அமைப்பின் வரம்புகள் மூன்றை விவரிக்க.` : `Identify three operational limitations of ${title}.`,
+        importance_stars: 2,
+        priority_tag: '⭐⭐ Practical Application Note',
+        answer: isTamil
+          ? `1. நிலையான நினைவக ஒதுக்கீடு வரம்புகள்.\n2. சுட்டிகளுக்கான கூடுதல் நினைவக தேவை.\n3. உச்ச சுமைகளில் மீள்வரிசைப்படுத்தல் தாமதம்.`
+          : `1. Fixed continuous allocation boundaries requiring pre-dimensioning.\n2. Reference pointer storage overhead in dynamic variations.\n3. Re-indexing latency during dynamic mutations.`
+      }
+    ],
+    questions_8mark: [
+      {
+        id: 1,
+        question: isTamil ? `${topic1} மற்றும் ${topic2} ஆகியவற்றின் கட்டமைப்பு, செயல்பாட்டு முறை மற்றும் பயன்பாடுகளை விவரிக்க (8 Marks).` : `Explain the architecture, working mechanism, and practical applications of ${topic1} and ${topic2} (8 Marks).`,
+        importance_stars: 3,
+        priority_tag: '⭐⭐⭐ Core Part B University Question',
+        answer: isTamil
+          ? `> **வரையறை பெட்டி (Definition Box):**\n> **${topic1}** என்பது கணினி அறிவியலில் தரவுகளை தொடர்ச்சியான மற்றும் கட்டமைக்கப்பட்ட முறையில் நிர்வகிக்கும் ஒரு முக்கிய வடிவமைப்பாகும்.\n\n### 1. செயல்பாட்டுக் கொள்கை (Working Principle)\n- **படி 1: உள்ளீட்டு ஏற்பு:** ஆரம்பத் தரவு மதிப்புகள் இடையகத்தில் பெறப்பட்டு சரிபார்க்கப்படுகின்றன.\n- **படி 2: நினைவக ஒதுக்கீடு:** நிலையான அல்லது இயக்கவியல் முறையில் நினைவகம் பிரிக்கப்படுகிறது.\n- **படி 3: சுட்டி மேலாண்மை:** சுட்டிகள் (pointers) மூலம் முந்தைய மற்றும் அடுத்த நிலைகள் இணைக்கப்படுகின்றன.\n- **படி 4: வெளியீட்டு விநியோகம்:** முறைப்படுத்தப்பட்ட முடிவுகள் பயன்பாட்டு அடுக்கிற்கு அனுப்பப்படுகின்றன.\n\n### 2. நிரல் மாதிரி & வெளியீடு (Code & Output)\n\`\`\`java\n// 8-Mark University Standard Implementation\npublic class SolutionDemo {\n    public static void main(String[] args) {\n        System.out.println("Executing ${topic1} core mechanism...");\n        int[] values = {10, 20, 30, 40};\n        for (int v : values) System.out.print(v + " -> ");\n        System.out.println("END");\n    }\n}\n\`\`\`\n**வெளியீடு:** \`Executing ${topic1} core mechanism... 10 -> 20 -> 30 -> 40 -> END\`\n\n### 3. நன்மைகள் மற்றும் நிஜ உலக பயன்பாடு\n- **நன்மைகள்:** கணிக்கக்கூடிய அணுகல் வேகம் O(1), குறைந்த நினைவக விரயம்.\n- **பயன்பாடு:** லினக்ஸ் கர்னல் செயல்முறை திட்டமிடல் (Linux Kernel Process Scheduler) மற்றும் கூகுள் குரோம் பிரவுசர் தாவல் மேலாண்மை.`
+          : `> **DEFINITION BOX:**\n> **${topic1}** is an essential architectural paradigm engineered to provide deterministic access, bounded state transitions, and structured memory organization.\n\n### 1. Architectural Scope & Operating Mechanism\n- **Ingestion & Validation:** Incoming requests pass through formal parameter assertion boundaries.\n- **Storage Allocation:** Memory regions are partitioned contiguously or via chained reference pointers.\n- **State Traversal:** Algorithmic pointers update state with deterministic bounded latency.\n- **Resource Reclamation:** Safe deallocation protocols prevent fragmentation and memory leaks.\n\n### 2. University Standard Implementation & Terminal Output\n\`\`\`java\npublic class SystemMechanismDemo {\n    public static void main(String[] args) {\n        System.out.println("=== Initializing ${topic1} ===");\n        int[] buffer = {15, 30, 45, 60};\n        for (int node : buffer) {\n            System.out.println("Processed Node: " + node);\n        }\n        System.out.println("State transition verified successfully.");\n    }\n}\n\`\`\`\n**Terminal Output:**\n\`\`\`text\n=== Initializing ${topic1} ===\nProcessed Node: 15\nProcessed Node: 30\nProcessed Node: 45\nProcessed Node: 60\nState transition verified successfully.\n\`\`\`\n\n### 3. Performance Tradeoffs & Industrial Relevance\n- **Time Complexity:** Search: O(n), Insertion: O(1), Direct Index: O(1).\n- **Industrial Benchmark:** Deployed in Netflix high-throughput streaming caches and Redis in-memory storage.`
+      },
+      {
+        id: 2,
+        question: isTamil ? `${topic2} அமைப்பின் வடிவமைப்பு உத்திகள் மற்றும் நினைவக மேலாண்மையை விவரிக்க (8 Marks).` : `Discuss the design patterns, memory allocation strategies, and trade-offs of ${topic2} (8 Marks).`,
+        importance_stars: 3,
+        priority_tag: '⭐⭐⭐ High-Scoring Structured Essay',
+        answer: isTamil
+          ? `> **வரையறை பெட்டி:**\n> **${topic2}** என்பது வள நுகர்வை குறைத்து இயக்க நேர செயல்திறனை அதிகரிக்கும் ஒரு முறையான வடிவமைப்பு கோட்பாடாகும்.\n\n### 1. முக்கிய வடிவமைப்பு கூறுகள்\n- **நேரடி நினைவக ஒதுக்கீடு:** முன்-ஒதுக்கப்பட்ட நினைவகத் தொகுதிகள் மூலம் துரித அணுகல்.\n- **சுழற்சி இணைப்பு உத்தி:** எல்லைச் சுட்டிகள் மீண்டும் தொடக்க நிலையை அடையும்படி வடிவமைத்தல்.\n- **பிழை தவிர்ப்பு:** எல்லை மீறல்களை (boundary conditions) பாதுகாப்பாகக் கையாளும் வழிமுறைகள்.\n\n### 2. வரைபட வடிவமைப்பு (Diagram Flow)\n[Diagram: Input Stream -> Allocation Controller -> Reference Graph -> Output Pipeline]\n\n### 3. சிக்கல்தன்மை ஆய்வு\n- கால சிக்கல்தன்மை: O(n) சராசரி நிலை.\n- நினைவக சிக்கல்தன்மை: O(1) கூடுதல் நினைவகம்.`
+          : `> **DEFINITION BOX:**\n> **${topic2}** establishes systematic protocols for minimizing computational overhead while guaranteeing data integrity across multi-threaded operations.\n\n### 1. Architectural Pillars\n- **Deterministic Memory Mapping:** Pre-allocates aligned memory blocks, maximizing CPU cache line locality.\n- **Circular Ring Traversal:** Replaces null-pointer boundaries with continuous cyclic transitions.\n- **Fault Containment:** Exception traps capture edge conditions without degrading surrounding system threads.\n\n### 2. Architectural Diagram Flow\n\`\`\`text\n[Client Request] --> [Boundary Controller] --> [Allocated Cache Block] --> [Commit Output]\n\`\`\`\n\n### 3. Algorithmic Bounds & Industrial Deployment\n- **Complexity:** Amortized O(1) for state operations; O(n) for comprehensive restructuring.\n- **Real-World Systems:** Core engine in Apache Kafka commit logs and PostgreSQL write-ahead logging (WAL).`
+      },
+      {
+        id: 3,
+        question: isTamil ? `${topic3} வழிமுறையின் படிநிலை செயல்பாடுகள் மற்றும் கணித சூத்திரங்களை விளக்குக (8 Marks).` : `Illustrate the step-by-step algorithmic procedure and asymptotic complexity of ${topic3} (8 Marks).`,
+        importance_stars: 3,
+        priority_tag: '⭐⭐⭐ Repeated Analytical Problem',
+        answer: isTamil
+          ? `> **வரையறை பெட்டி:**\n> **${topic3}** என்பது படிநிலை செயல்பாடுகளின் வழியாக உகந்த தீர்வை வழங்கும் ஒரு முக்கியமான வழிமுறையாகும்.\n\n### 1. படிநிலை செயல்முறை\n- **படி 1 (தொடக்க நிலை):** சுட்டிகள் பூஜ்ஜிய மதிப்பில் அமைக்கப்படுகின்றன.\n- **படி 2 (ஒப்பீடு & வரிசைப்படுத்தல்):** தற்போதைய மதிப்பு இலக்கு மதிப்புடன் ஒப்பிடப்படுகிறது.\n- **படி 3 (இடமாற்றம்):** நிபந்தனை பூர்த்தியானால் மதிப்புகள் முறையாகப் பரிமாறப்படுகின்றன.\n- **படி 4 (முடிவு):** அனைத்து நிலைகளும் சரிபார்க்கப்பட்டு இறுதி முடிவு எட்டப்படுகிறது.\n\n### 2. கணித சூத்திரம் & பகுப்பாய்வு\n- சுழற்சிகளின் எண்ணிக்கை = n * (n - 1) / 2\n- கால சிக்கல்தன்மை: Best: O(n), Average: O(n log n), Worst: O(n^2).`
+          : `> **DEFINITION BOX:**\n> **${topic3}** provides an optimal mathematical algorithm engineered to partition, traverse, and order data collections under provable asymptotic constraints.\n\n### 1. Algorithmic Procedure\n- **Step 1 (Pivot Selection):** Establish boundary indices and identify median candidate.\n- **Step 2 (Partitioning Phase):** Reorder elements such that values strictly adhere to the invariant condition.\n- **Step 3 (Recursive Sub-division):** Apply inductive divide-and-conquer to remaining segments.\n- **Step 4 (Termination Guarantee):** Halts when sub-arrays reach unitary length 1.\n\n### 2. Asymptotic Bounds & Space Invariants\n- **Recurrence Relation:** T(n) = 2T(n/2) + O(n) => By Master Theorem: T(n) = O(n log n).\n- **Auxiliary Space:** O(log n) stack frame depth, strictly preventing stack exhaustion.`
+      },
+      {
+        id: 4,
+        question: isTamil ? `${topic4} நடைமுறை பொறியியல் அமைப்புகளில் எவ்வாறு செயல்படுத்தப்படுகிறது? (8 Marks)` : `Explain how ${topic4} is engineered in production systems and enterprise software (8 Marks).`,
+        importance_stars: 3,
+        priority_tag: '⭐⭐⭐ Architectural Mechanism',
+        answer: isTamil
+          ? `> **வரையறை பெட்டி:**\n> **${topic4}** என்பது பெரிய அளவிலான உற்பத்தி மென்பொருட்களில் நம்பகத்தன்மை மற்றும் அளவிடுதலை உறுதி செய்யும் ஒரு முக்கிய தொழில்நுட்பமாகும்.\n\n### 1. உற்பத்தி கட்டமைப்பு\n- **சுமை பகிர்வு (Load Balancing):** வினவல்களை பல முனைகளுக்கு சமமாகப் பகிர்ந்தளிக்கிறது.\n- **நினைவக தேக்கம் (In-memory Caching):** அடிக்கடி அணுகப்படும் தரவுகளை ரேமில் தேக்கி வைக்கிறது.\n- **பிழை மீட்பு (Disaster Recovery):** தரவு இழப்பின்றி தானியங்கி மீட்பு முறைகளை வழங்குகிறது.\n\n### 2. நிஜ உலக பயன்கள்\n- கூகுள் சர்ச் அட்டவணைப்படுத்தல் மற்றும் அமேசான் மின்வணிக அமைப்புகள்.`
+          : `> **DEFINITION BOX:**\n> **${topic4}** represents enterprise-grade production engineering, reconciling scalability, fault tolerance, and sub-second transaction guarantees.\n\n### 1. Production Architecture Layers\n- **Dynamic Load Distribution:** Balances incoming worker threads across distributed nodes.\n- **Multi-Level Cache Hierarchy:** L1/L2 CPU cache alignment reduces RAM bus saturation.\n- **Zero-Downtime Resilience:** Circuit breakers and health probes guarantee continuous service availability.\n\n### 2. Industrial Reference\n- Powering Amazon AWS DynamoDB micro-partitions and Google Spanner global timestamp ordering.`
+      }
+    ],
+    questions_5mark: [
+      {
+        id: 1,
+        question: isTamil ? `${topic1} மற்றும் ${topic2} பற்றி விரிவாக வரைக.` : `Explain the working mechanism and principles of ${topic1}.`,
+        importance_stars: 2,
+        priority_tag: '⭐⭐ Core Syllabus Topic',
+        answer: isTamil
+          ? `[வரையறை பெட்டி: ${topic1}]\n- கட்டமைப்பு மற்றும் செயல்பாட்டுக் கோட்பாடு.\n- நினைவக அமைப்பு மற்றும் செயல்முறை வரிசை.\n- நன்மைகள் மற்றும் நடைமுறை முக்கியத்துவம்.`
+          : `[DEFINITION BOX: ${topic1}]\n- Architectural flow and foundational operational parameters.\n- Contiguous vs non-contiguous memory management tradeoffs.\n- Implementation syntax, error handling, and performance metrics.`
+      }
+    ],
+    questions_12mark: [
+      {
+        id: 1,
+        question: isTamil
+          ? `${title} - முழுமையான கட்டமைப்பு, செயல்பாட்டு முறை, நிரல் மற்றும் நிஜ உலக பயன்பாடுகளை விவரிக்க (12 Marks).`
+          : `Discuss in detail the architecture, working mechanism, full code implementation, and real-world applications of ${title} (12 Marks).`,
+        importance_stars: 3,
+        priority_tag: '⭐⭐⭐ High Frequency University Master Essay (12/12)',
+        answer: {
+          introduction: isTamil
+            ? `> **வரையறை பெட்டி (Definition Box):**\n> **${title}** என்பது முறையான வடிவமைப்பு, தரவு மேலாண்மை மற்றும் கட்டமைப்பு ரீதியான செயலாக்கத்தை வழங்கும் நவீன பொறியியலின் ஒரு முதன்மை கோட்பாடாகும்.\n\n${title} பல்கலைக்கழக தேர்வுகளில் கேட்கப்படும் ஒரு தலையாய வினாவாகும். இது அமைப்புகளின் நிலைத்தன்மை, நினைவக ஒருமைப்பாடு மற்றும் வேகத்தை உறுதி செய்கிறது.`
+            : `> **DEFINITION BOX:**\n> **${title}** is an essential computational paradigm and structural framework designed to manage resources, organize state transitions, and guarantee formal execution correctness.\n\n${title} forms the bedrock of modern software and hardware systems, ensuring deterministic operations and optimal performance under real-world constraints.`,
+
+          architecture_types: isTamil
+            ? `**முக்கிய வகைகள் மற்றும் கட்டமைப்பு பிரிவுகள் (Types & Architecture):**\n- **1. நிலை 1: தொடக்க நிலை (Static / Primitive Structure):** தொடக்கத் தரவுகளை சேமித்து வரிசைப்படுத்தப்பட்ட O(1) நேரடி அணுகலை வழங்குகிறது.\n- **2. நிலை 2: சுட்டி இணைப்பு நிலை (Dynamic Pointer-Linked Structure):** சுட்டிகள் (pointers) மூலம் நெகிழ்வான நினைவக ஒதுக்கீட்டை வழங்குகிறது.\n- **3. நிலை 3: சுழற்சி மற்றும் பல பரிமாண கட்டமைப்பு (Circular / Multi-Dimensional Variant):** வட்ட வடிவ இணைப்பில் சுழற்சி இடையகங்களை (ring buffers) உருவாக்குகிறது.\n\n[Diagram Description: System Architecture Flowchart — Input Buffer -> Core Processing Engine -> State Cache -> Output Stream]`
+            : `**Architectural Scope & Structural Categories (with Definitions):**\n- **1. Contiguous / Static Structure:** Memory is allocated in contiguous physical blocks with fixed boundaries, enabling deterministic O(1) indexed access.\n- **2. Dynamic / Pointer-Linked Structure:** Memory is allocated on-demand in heap blocks connected through reference pointers, eliminating resizing overhead.\n- **3. Recursive / Circular Variant:** The tail node cycles back to the origin, creating a seamless round-robin ring buffer without null terminators.\n\n[Diagram Description: Structural Architecture Diagram — Input Register -> Index Allocator -> Pointer Graph -> Output Terminal]`,
+
+          concrete_example: isTamil
+            ? `**நிஜ உலக பயன்பாடுகள் (Real-world Relevance):**\n1. **Google தேடுபொறி & தரவு அட்டவணைப்படுத்தல்:** இணைய பக்கங்களை விரைவாக வரிசைப்படுத்தவும் மீட்டெடுக்கவும் பயன்படுகிறது.\n2. **Linux ஆப்பரேட்டிங் சிஸ்டம்:** நினைவக ஒதுக்கீடு, செயல்முறை திட்டமிடல் (process scheduling) மற்றும் வன்பொருள் சாதன இயக்கிகளில் நேரடியாகப் பயன்படுகிறது.\n3. **Netflix & YouTube Streaming:** வீடியோ தரவுகளை இடையகத்தில் (buffer) சீராக ஏற்றி பிழையின்றி இயக்க உதவுகிறது.`
+            : `**Concrete Example & Real-World Relevance:**\n1. **Cloud-Scale Streaming (Netflix / Spotify):** Circular ring buffers manage live audiovisual streaming packets, preventing jitter and buffer underruns.\n2. **Linux Kernel Task Scheduling:** Priority lists and runqueues manage millions of context switches per second across multicore processors.\n3. **Database Transaction Logs (PostgreSQL / SQLite):** Sequential and chained structures record write-ahead logs (WAL) to guarantee ACID compliance.`,
+
+          program_code: `// 4. Full Clean Programming Code (Java Standard Implementation)\npublic class ExamSolution {\n    public static void main(String[] args) {\n        System.out.println("=== Demonstration of ${title} ===");\n        int[] dataset = {12, 24, 36, 48, 60};\n        \n        // Step-by-step processing\n        int sum = 0;\n        for (int value : dataset) {\n            sum += value;\n            System.out.println("Processed Element: " + value + " | Running Total: " + sum);\n        }\n        \n        System.out.println("Processing completed successfully. Total: " + sum);\n    }\n}`,
+
+          program_output: `=== Demonstration of ${title} ===\nProcessed Element: 12 | Running Total: 12\nProcessed Element: 24 | Running Total: 36\nProcessed Element: 36 | Running Total: 72\nProcessed Element: 48 | Running Total: 120\nProcessed Element: 60 | Running Total: 180\nProcessing completed successfully. Total: 180`,
+
+          numerical_problem: isTamil
+            ? `**கணித மாதிரி வினா மற்றும் தீர்வு (Worked-Out Example Problem):**\n- **வினா:** ${title} அமைப்பில் அடிப்படை நினைவக முகவரி Base Address = 1000, உறுப்பின் அளவு w = 4 bytes மற்றும் சுட்டி எண் i = 3 எனில், 3-வது உறுப்பின் நினைவக முகவரியைக் கணக்கிடுக.\n- **சூத்திரம்:** முகவரி = Base + (i * w)\n- **படி 1:** Base = 1000, i = 3, w = 4\n- **படி 2:** முகவரி = 1000 + (3 * 4) = 1000 + 12\n- **விடை:** நினைவக முகவரி = 1012. தேர்வுக்கான முழு மதிப்பெண் தீர்வு.`
+            : `**Numerical / Example Problem & Step-by-Step Worked-Out Solution:**\n- **Problem Statement:** In an implementation of ${title}, calculate the physical memory address of element at index i = 4 given Base Address = 2000 and element size w = 4 bytes.\n- **Formula:** Address(A[i]) = Base_Address + (i * Element_Size)\n- **Step 1 (Parameter Substitution):** Base_Address = 2000, i = 4, w = 4\n- **Step 2 (Computation):** Address = 2000 + (4 * 4) = 2000 + 16\n- **Result:** Physical Memory Address = 2016 bytes.`,
+
+          tradeoffs_complexity: isTamil
+            ? `**நன்மைகள், வரம்புகள் மற்றும் கால/நினைவக சிக்கல்தன்மை (Trade-offs & Complexity):**\n- **நன்மைகள்:** கணிக்கக்கூடிய வேகம், எளிய பராமரிப்பு, அதிக நம்பகத்தன்மை.\n- **வரம்புகள்:** நிலையான வரம்புகள் அல்லது சுட்டிகளுக்கு கூடுதல் நினைவக தேவை.\n- **கால சிக்கல்தன்மை (Time Complexity):** சிறந்த நிலை O(1), சராசரி நிலை O(n), மோசமான நிலை O(n).\n- **நினைவக சிக்கல்தன்மை (Space Complexity):** O(1) துணை நினைவகம், O(n) சேமிப்பக நினைவகம்.`
+            : `**Advantages, Disadvantages & Time/Space Complexity:**\n- **Advantages:** Deterministic access latency, minimal computational overhead, cache-friendly spatial locality.\n- **Disadvantages:** Rigid boundary allocation or pointer memory overhead (4/8 bytes per reference).\n- **Time Complexity:** Best Case: O(1) | Average Case: O(n) | Worst Case: O(n)\n- **Space Complexity:** Auxiliary Space: O(1) | Total Space: O(n)`
+        }
+      },
+      {
+        id: 2,
+        question: isTamil
+          ? `${topic2} மற்றும் ${topic3} ஆகியவற்றின் முழுமையான தொழில்நுட்ப ஒப்பீடு, வடிவமைப்பு வரைபடம் மற்றும் அல்காரிதம் பகுப்பாய்வு (12 Marks).`
+          : `Provide an exhaustive technical evaluation, structural architectural diagram, and computational complexity analysis of ${topic2} vs ${topic3} (12 Marks).`,
+        importance_stars: 3,
+        priority_tag: '⭐⭐⭐ High Frequency University Master Essay (12/12)',
+        answer: {
+          introduction: isTamil
+            ? `> **வரையறை பெட்டி:**\n> **${topic2} மற்றும் ${topic3}** இரண்டும் நவீன மென்பொருள் மற்றும் வன்பொருள் கட்டமைப்புகளின் தூண்களாக விளங்குகின்றன.\n\nபல்கலைக்கழக தேர்வுகளில் இந்த ஒப்பீட்டு வினா அடிக்கடி கேட்கப்படும் ஒரு முக்கியமான பகுதியாகும்.`
+            : `> **DEFINITION BOX:**\n> Comparative evaluation of **${topic2}** versus **${topic3}** establishes the architectural foundation for selecting structural vs algorithmic trade-offs in distributed enterprise systems.`,
+
+          architecture_types: isTamil
+            ? `**கட்டமைப்பு பிரிவுகள் (Comparative Architecture):**\n- **முறை A (${topic2}):** நேரடி நினைவக ஒதுக்கீடு, தொடர்ச்சியான அணுகல், அதிக வேக கேச்சிங்.\n- **முறை B (${topic3}):** நெகிழ்வான சுட்டிகள், தேவைக்கேற்ப நினைவக விரிவாக்கம், துண்டாடல் தடுப்பு.\n\n[Diagram Description: Structural Architecture Comparison — Branch A (Contiguous Linear) vs Branch B (Dynamic Graph Traversal)]`
+            : `**Structural Decomposition & Architectural Comparison:**\n- **System Paradigm A (${topic2}):** Sequential execution pipeline with pre-allocated hardware caches.\n- **System Paradigm B (${topic3}):** Dynamic asynchronous dispatch model with priority runqueues.\n\n[Diagram Description: Comparative Architecture Diagram — Flow A (Deterministic Core) vs Flow B (Dynamic Event Loop)]`,
+
+          concrete_example: isTamil
+            ? `**தொழில்துறை உதாரணங்கள்:**\n1. **PostgreSQL & MySQL:** அட்டவணை மற்றும் குறியீட்டு தேடல் கட்டமைப்பில் பயன்படுகிறது.\n2. **Android & iOS ரன்டைம்:** பயன்பாடுகளின் நினைவக மேலாண்மை மற்றும் நிகழ்வு வரிசைகளில் பயன்படுகிறது.`
+            : `**Industrial Benchmarks:**\n1. **Relational Storage Engines (MySQL InnoDB / RocksDB):** Managing index traversals and B-Tree node splits.\n2. **High-Frequency Trading Engines:** Utilizing zero-copy buffers to achieve sub-microsecond transaction settlement.`,
+
+          program_code: `// Comparative Demonstration Algorithm (Java Standard)\npublic class ComparativeAnalysis {\n    public static void main(String[] args) {\n        System.out.println("Comparing ${topic2} vs ${topic3}");\n        long start = System.nanoTime();\n        // Benchmarking operational cycles\n        int sum = 0;\n        for (int i = 1; i <= 1000; i++) sum += i;\n        long duration = System.nanoTime() - start;\n        System.out.println("Execution Cycles Complete. Metric: " + duration + " ns");\n    }\n}`,
+
+          program_output: `Comparing ${topic2} vs ${topic3}\nExecution Cycles Complete. Metric: 420 ns`,
+
+          numerical_problem: isTamil
+            ? `**கணித மாதிரி வினா:**\n- வினா: n = 1000 உறுப்புகள் கொண்ட தரவுத்தொகுப்பில் தேடல் செயல்பாட்டிற்கான அதிகபட்ச ஒப்பீடுகளைக் கணக்கிடுக.\n- சூத்திரம்: ஒப்பீடுகள் = log2(n)\n- தீர்வு: log2(1000) ≈ 10 ஒப்பீடுகள். அதிகபட்ச வேகம் உறுதி செய்யப்படுகிறது.`
+            : `**Numerical Problem & Worked-Out Solution:**\n- Problem: For an input size n = 1024, calculate the theoretical comparison count difference between O(n) linear vs O(log n) logarithmic traversal.\n- Formula: Linear = n = 1024; Logarithmic = log2(1024) = 10\n- Evaluation: Logarithmic reduces search operations from 1024 steps to only 10 steps (102.4x speedup).`,
+
+          tradeoffs_complexity: isTamil
+            ? `**சிக்கல்தன்மை ஒப்பீடு:**\n- முறை A: O(1) அணுகல், O(n) மாற்றம்.\n- முறை B: O(log n) அணுகல், O(1) செருகல்.\n- முடிவு: தேவையைப் பொறுத்து சரியான முறையைத் தேர்வு செய்ய வேண்டும்.`
+            : `**Analytical Trade-offs & Complexity:**\n- Paradigm A: Search O(1) to O(n) | Space O(1) static | Best for read-heavy workloads.\n- Paradigm B: Search O(log n) | Space O(n) dynamic | Best for mutation-intensive workloads.`
+        }
+      }
+    ]
+  };
+}
+
+/**
+ * POST /api/gemini/chat
+ * Interactive Gemini AI Study Assistant Chat.
+ * Answers custom queries: definitions, code snippets, derivations, 12-mark essay answers.
+ */
+router.post('/chat', async (req, res) => {
+  try {
+    const { query, context = '', language = 'en' } = req.body;
+
+    if (!query || typeof query !== 'string' || !query.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: 'query is required.'
+      });
+    }
+
+    const isTamil = language === 'ta';
+    const langGuideline = isTamil
+      ? `LANGUAGE REQUIREMENT: TAMIL (இயல்பான பேச்சுத் தமிழ் & தெளிவான கல்வித் தமிழ்)
+- Use natural modern conversational Tamil (இயல்பான தமிழ்) with clear explanations.
+- Include English technical terms alongside Tamil (e.g. "Linked List (இணைக்கப்பட்ட பட்டியல்)").`
+      : `LANGUAGE REQUIREMENT: MULTILINGUAL AUTO-DETECTION
+- Automatically detect the input language and native script (Tamil, English, Hindi, Telugu, Malayalam, Kannada, etc.).
+- Respond fluently in the user's matching language style and native script.
+- If the user writes or speaks in English, reply in professional Indian University academic English.`;
+
+    const systemInstruction = `You are an advanced, context-aware AI study assistant inside EduMind AI, functioning with the intelligence and capabilities of Gemini and ChatGPT.
+
+Core Directives:
+1. Strict User Intent & Zero Hardcoded Templates:
+   - Never force a rigid, pre-set template unless the user explicitly asks for a full breakdown.
+   - Deeply analyze what the user is asking:
+     * If the user asks for simple English or simple words, deliver explanations in clean, accessible, and intuitive words.
+     * If the user asks for specific elements (e.g. definition + program + output + types), provide exactly those requested elements directly and thoroughly.
+     * If they want just an example, provide only the example.
+     * If they want a specific concept, focus entirely on that concept without drifting.
+   - 8-Mark Structured Answer: When an 8-mark answer is requested, provide a comprehensive structured breakdown spanning approximately 1 page of detail, featuring a highlighted [DEFINITION BOX: ...], 5-6 bullet points of working principles/mechanisms, practical example, and clean code or exam diagram.
+   - 12-Mark University Essay: When a 12-mark answer is requested, provide an exhaustive university-essay standard answer spanning approximately 2 to 2.5 pages of detailed explanation following the full 7-Part University Exam Sheet Standard:
+     1. Introduction & Formal Definition Box
+     2. Architectural Scope & Types/Categories (with definition for each type)
+     3. Concrete Example & Real-World Industrial Relevance
+     4. Full Clean Programming Code (Java/C++/Python)
+     5. Exact Terminal Output
+     6. Numerical / Worked-Out Example Problem & Solution
+     7. Advantages, Disadvantages & Big-O Time/Space Complexity
+
+2. Multilingual Support:
+   - Deeply analyze user intent across any spoken or written language (Tamil, English, Hindi, Telugu, Malayalam, Kannada, etc.).
+   - Respond fluently in the matching language style and native script (e.g. தமிழ் for Tamil, हिन्दी for Hindi, తెలుగు for Telugu, മലയാളம் for Malayalam) without hardcoded fallback templates.
+   - Always preserve standard technical keywords clearly alongside native script.
+
+3. Visual Diagrams & Flowcharts (Mermaid.js):
+   - When a user requests a flowchart, diagram, architecture, or visual mapping, never output raw descriptive text lines.
+   - Generate precise, renderable visual structures using valid Mermaid.js code blocks (\`\`\`mermaid ... \`\`\`) so the frontend renders actual interactive SVG diagrams.
+
+4. Conversational & Natural:
+   - Maintain a helpful, engaging, and human-like conversational tone at all times.
+
+${langGuideline}
+
+${context ? `SYLLABUS / CHAPTER CONTEXT:\n${context.slice(0, 10000)}` : ''}`;
+
+    let reply = '';
+    try {
+      reply = await generateWithGemini(
+        query.trim(),
+        systemInstruction,
+        'text/plain'
+      );
+    } catch (aiErr) {
+      console.warn('Gemini chat error, fallback to Groq or local:', aiErr.message);
+      if (groqClient) {
+        try {
+          const completion = await withTimeout(
+            groqClient.chat.completions.create({
+              model: 'openai/gpt-oss-120b',
+              messages: [
+                { role: 'system', content: systemInstruction },
+                { role: 'user', content: query.trim() }
+              ]
+            }),
+            12000,
+            'Groq chat fallback'
+          );
+          reply = completion.choices[0]?.message?.content || '';
+        } catch (groqErr) {
+          console.warn('Groq chat fallback error:', groqErr.message);
+        }
+      }
+    }
+
+    if (!reply || !reply.trim()) {
+      const qLower = query.toLowerCase();
+      const wantsCode = /program|code|implement/i.test(qLower);
+      const wantsTypes = /type|category|categories|kinds/i.test(qLower);
+      const wants12Mark = /12[-\s]?mark|essay|full breakdown|7[-\s]?part/i.test(qLower);
+      const wantsDiagram = /diagram|flowchart|draw|visual/i.test(qLower);
+
+      if (wants12Mark) {
+        reply = `### 1. Introduction & Core Definition\n> **DEFINITION BOX:**\n> **${query.trim()}** is an essential topic and foundational concept in this subject syllabus.\n\n### 2. Architectural Scope & Types/Categories\n- **Type 1: Primary Structural Unit:** Handles initial data ingestion and core operations.\n- **Type 2: Dynamic Extended Variant:** Employs reference pointers to scale dynamically without memory fragmentation.\n\n### 3. Concrete Example & Real-world Relevance\n- Deployed in cloud infrastructure (e.g. Netflix video chunking, Linux kernel memory management).\n\n### 4. Full Clean Programming Code (Java)\n\`\`\`java\npublic class SolutionDemo {\n    public static void main(String[] args) {\n        System.out.println("Executing demonstration for: ${query.trim()}");\n    }\n}\n\`\`\`\n\n### 5. Exact Program Output\n\`\`\`text\nExecuting demonstration for: ${query.trim()}\n\`\`\`\n\n### 6. Numerical / Example Problem & Worked-out Solution\n- Formula: Base + (Index * Size) = 1000 + (3 * 4) = 1012.\n\n### 7. Advantages, Disadvantages & Complexity\n- Time Complexity: O(1) to O(n) | Space Complexity: O(1) auxiliary.`;
+      } else {
+        const sections = [];
+        sections.push(`### 📖 Definition & Overview\n**${query.trim()}** is a foundational concept. In simple terms, it provides an organized and reliable mechanism to solve the problem efficiently.`);
+
+        if (wantsTypes) {
+          sections.push(`### 📂 Key Types & Categories\n1. **Standard / Fundamental Type:** Handles everyday normal operations with direct execution.\n2. **Dynamic / Advanced Type:** Adapts at runtime using flexible pointers and condition handlers.`);
+        }
+
+        if (wantsDiagram) {
+          sections.push(`### 📊 Visual Flowchart / Diagram\n\`\`\`mermaid\ngraph TD\n    A[Input / Problem Request] --> B[Processing Unit]\n    B --> C{Validation Check}\n    C -->|Success| D[Normal Execution & Output]\n    C -->|Error| E[Exception / Recovery Handler]\n\`\`\``);
+        }
+
+        if (wantsCode) {
+          sections.push(`### 💻 Clean Program Code (Java)\n\`\`\`java\npublic class MainDemo {\n    public static void main(String[] args) {\n        try {\n            System.out.println("Running demonstration for ${query.trim()}");\n            int result = 100 / 10;\n            System.out.println("Computed Result: " + result);\n        } catch (Exception e) {\n            System.out.println("Caught exception: " + e.getMessage());\n        }\n    }\n}\n\`\`\`\n\n### 📟 Exact Output\n\`\`\`text\nRunning demonstration for ${query.trim()}\nComputed Result: 10\n\`\`\``);
+        }
+
+        sections.push(`*Feel free to ask for more specific examples, different programming languages, or a visual diagram!*`);
+        reply = sections.join('\n\n');
+      }
+    }
+
+    return res.status(200).json({
+      success: true,
+      provider: 'gemini-assistant',
+      answer: reply.trim()
+    });
+
+  } catch (err) {
+    console.error('Gemini chat route error:', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to process chat request.',
+      error: err.message
+    });
+  }
+});
+
+/**
+ * POST /api/gemini/story-convert
+ * Converts difficult theory papers into simplified explanations & relatable stories.
+ * Built for natural text-to-speech voice playback in conversational Tamil and English.
+ */
+router.post('/story-convert', async (req, res) => {
+  try {
+    const { text, language = 'ta' } = req.body;
+
+    if (!text || typeof text !== 'string' || !text.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: 'text is required for story conversion.'
+      });
+    }
+
+    const cleanedText = cleanOcrArtifacts(text.trim());
+    const isTamil = language === 'ta';
+    const langInstruction = isTamil
+      ? `TAMIL VOICE & DIALOGUE STYLE:
+- Use natural, friendly, conversational modern Tamil (இயல்பான பேச்சுத் தமிழ்) like an enthusiastic university professor delivering an inspiring lecture over tea.
+- Do NOT use archaic, stiff, formal book Tamil.
+- Write with clear, expressive, rhythmic sentences that Text-To-Speech (TTS) voices can read with natural warmth, vocal inflections, and emotion without stumbling.`
+      : `ENGLISH VOICE & DIALOGUE STYLE:
+- Use an engaging, conversational, friendly professor tone with clear, expressive phrasing optimized for natural audio reading.`;
+
+    const systemInstruction = `You are EduMind Distinguished Professor & Academic Storyteller.
+Your mission: Acting as an expert professor, analyze the user's uploaded syllabus topic deeply from A to Z, explaining core principles, behavior, and working mechanisms thoroughly in an engaging narrative style while staying 100% true to the actual content.
+
+STRICT CONSTRAINTS & REQUIREMENTS:
+1. NO BRIEF 2-LINE SUMMARIES OR SHORT OVERVIEWS:
+   - Do NOT provide a brief overview or short 2-line summary.
+   - Deliver a rich, comprehensive, deep-dive academic lecture (approx 500-900 words / 3000-5000 characters) that analyzes the syllabus deeply from A to Z.
+2. ZERO UNPROMPTED FICTIONAL METAPHORS:
+   - Do NOT invent fictional stories, unrelated metaphors, trains, bogies, cars, animals, chefs, robots, or fairy tales.
+   - Do NOT say "Imagine a train running on a single track" or "Imagine a chef in a kitchen". Stay 100% faithful to the real technical/academic concepts.
+3. PROFESSOR-GRADE DEEP ANALYSIS FROM A TO Z:
+   - Part A: Academic Introduction — Big-picture context, core definition, and why this topic is fundamental.
+   - Part B: Principle & Architecture Breakdown — Step-by-step examination of every topic, primitive structure, array dimension, or data organization mentioned in the text.
+   - Part C: Working Mechanisms & Internal Behaviors — Explain how operations, pointers, memory addresses, insertions, deletions, and traversals execute under the hood.
+   - Part D: Types & Variations — Deeply contrast each type (e.g. Singly, Doubly, and Circular Linked Lists) explaining pointer configurations and edge cases.
+   - Part E: Real-world Engineering Applications — Where and why operating systems, cloud services, and real-world software rely on these mechanisms.
+4. ENGAGING NARRATIVE SPOKEN STYLE:
+   - ${langInstruction}
+
+Return ONLY a valid JSON object matching:
+{
+  "title": "Exact Chapter / Subject Title",
+  "simple_explanation": "Thorough, structured academic breakdown of all syllabus concepts from A to Z...",
+  "story": "Comprehensive deep-dive spoken masterclass lecture from A to Z covering core principles, inner working mechanisms, and variations in a warm, narrative conversational cadence with zero fictional metaphors...",
+  "audio_script": "Complete spoken lecture audio script for text-to-speech voice synthesis..."
+}`;
+
+    const rawText = await generateWithGemini(
+      `STUDENT'S SYLLABUS / THEORY TEXT TO CONVERT:\n\n${cleanedText.slice(0, 15000)}`,
+      systemInstruction
+    );
+
+    let parsed;
+    try {
+      const cleaned = rawText
+        .replace(/^```json\s*/i, '')
+        .replace(/^```\s*/i, '')
+        .replace(/```\s*$/i, '')
+        .trim();
+      parsed = JSON.parse(cleaned);
+    } catch {
+      const firstLine = cleanedText.split(/[\r\n.]+/)[0].slice(0, 50).trim() || 'Syllabus Concepts';
+      parsed = {
+        title: firstLine,
+        simple_explanation: rawText || cleanedText,
+        story: rawText || cleanedText,
+        audio_script: rawText || cleanedText
+      };
+    }
+
+    return res.status(200).json({
+      success: true,
+      provider: 'ai-engine',
+      ...parsed
+    });
+
+  } catch (err) {
+    console.warn('Gemini Story Conversion fallback to local synthesis:', err.message);
+    const cleaned = cleanOcrArtifacts(req.body?.text || '');
+    const firstLine = cleaned.split(/[\r\n.]+/)[0].slice(0, 50).trim() || 'Syllabus Core Concepts';
+    const isTamil = (req.body?.language || 'ta') === 'ta';
+
+    const fallbackStory = isTamil
+      ? `வணக்கம் நண்பரே! நீங்கள் தேர்ந்தெடுத்த ${firstLine} பாடத்தை தொடக்கம் முதல் முடிவு வரை (A to Z) ஆழமாக புரிந்து கொள்வோம். ${cleaned} உள்ளிட்ட அனைத்து கருத்துகளும் கணினி அறிவியலின் மிக முக்கியமான அடித்தளமாகும். முதன்மையாக, நினைவகத்தில் தரவுகள் எவ்வாறு சேமிக்கப்படுகின்றன என்பதையும், சுட்டிகள் (pointers) மற்றும் முகவரிகள் மூலமாக எவ்வாறு இயக்கப்படுகின்றன என்பதையும் நாம் கவனிக்க வேண்டும். ஒவ்வொரு கட்டமைப்பும் தனக்கென தனித்துவமான பயன்பாடுகளைக் கொண்டுள்ளன. இவற்றை தேர்வில் தெளிவாகவும் வரைபடங்களுடனும் எழுதும்போது அதிக மதிப்பெண்களைப் பெற முடியும்.`
+      : `Welcome scholars! Let us conduct a comprehensive, deep-dive academic breakdown of ${firstLine} from A to Z. Core syllabus concepts: ${cleaned}. Every component here governs fundamental memory allocation, operational efficiency, and deterministic pointer linkages. Understanding these mechanics from first principles empowers you to excel in your university examinations.`;
+
+    return res.status(200).json({
+      success: true,
+      provider: 'local-fast',
+      title: firstLine,
+      simple_explanation: fallbackStory,
+      story: fallbackStory,
+      audio_script: fallbackStory
+    });
+  }
+});
+
+/**
+ * Helper: Synthesize studio-quality conversational speech using Modern Neural Voices.
+ * - Tamil: Warm, expressive storytelling with 'ta-IN-PallaviNeural'
+ * - English: Soft, sweet, expressive human tutor with 'en-US-JennyNeural'
+ * - Prosody: Calibrated pitch, speed, and pacing to eliminate robotic monotony
+ * - Supports optional ElevenLabs API if ELEVENLABS_API_KEY is present in .env
+ */
+async function synthesizeNeuralSpeech({ text, language = 'ta', mode = 'story' }) {
+  const isTamil = language === 'ta';
+  
+  // Clean text from OCR noise, markdown formatting, asterisks, brackets, or code fences
+  const ocrCleaned = cleanOcrArtifacts(text);
+  const cleanedText = ocrCleaned
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/[*#_`>\[\]\(\)]/g, ' ')
+    .replace(/\{[\s\S]*?\}/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 4500); // Azure Neural single payload limit
+
+  if (!cleanedText) {
+    throw new Error('Text to synthesize is empty after cleaning.');
+  }
+
+  // 1. Optional ElevenLabs check if API key is provided
+  if (process.env.ELEVENLABS_API_KEY) {
+    try {
+      const voiceId = isTamil
+        ? (process.env.ELEVENLABS_TAMIL_VOICE_ID || 'pNInz6obpgDQGcFmaJgB')
+        : (process.env.ELEVENLABS_ENGLISH_VOICE_ID || 'EXAVITQu4vr4xnSDxMaL');
+      const elevenRes = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'xi-api-key': process.env.ELEVENLABS_API_KEY
+        },
+        body: JSON.stringify({
+          text: cleanedText,
+          model_id: 'eleven_multilingual_v2',
+          voice_settings: {
+            stability: 0.55,
+            similarity_boost: 0.75,
+            style: 0.40,
+            use_speaker_boost: true
+          }
+        })
+      });
+      if (elevenRes.ok) {
+        const arrayBuffer = await elevenRes.arrayBuffer();
+        return Buffer.from(arrayBuffer);
+      }
+    } catch (e) {
+      console.warn('ElevenLabs API fallback to Azure Neural Engine:', e.message);
+    }
+  }
+
+  // 2. Microsoft Azure Neural Voice Engine via msedge-tts
+  if (!MsEdgeTTS || !OUTPUT_FORMAT) {
+    throw new Error('msedge-tts library is not loaded on server.');
+  }
+
+  const voice = isTamil ? 'ta-IN-PallaviNeural' : 'en-US-JennyNeural';
+  
+  // Natural human tutor and storyteller acoustic parameters
+  let rate = '-6%';
+  let pitch = '+3Hz';
+  if (isTamil) {
+    // Tamil: Warm, engaging storytelling cadence
+    rate = mode === 'story' ? '-8%' : '-5%';
+    pitch = mode === 'story' ? '+2Hz' : '+1Hz';
+  } else {
+    // English: Soft, sweet, and expressive tutor cadence
+    rate = mode === 'story' ? '-6%' : '-4%';
+    pitch = mode === 'story' ? '+3Hz' : '+2Hz';
+  }
+
+  const tts = new MsEdgeTTS();
+  await tts.setMetadata(voice, OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3);
+  const { audioStream } = tts.toStream(cleanedText, { rate, pitch });
+
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    const timer = setTimeout(() => {
+      reject(new Error('Audio stream synthesis timed out after 12s'));
+    }, 12000);
+
+    audioStream.on('data', chunk => chunks.push(chunk));
+    audioStream.on('end', () => {
+      clearTimeout(timer);
+      resolve(Buffer.concat(chunks));
+    });
+    audioStream.on('error', err => {
+      clearTimeout(timer);
+      reject(err);
+    });
+  });
+}
+
+/**
+ * POST /api/gemini/synthesize-speech
+ * Generates natural conversational MP3 audio using Modern Neural AI Voices.
+ */
+router.post('/synthesize-speech', async (req, res) => {
+  try {
+    const { text, language = 'ta', mode = 'story' } = req.body;
+
+    if (!text || typeof text !== 'string' || !text.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: 'text is required for speech synthesis.'
+      });
+    }
+
+    const audioBuffer = await synthesizeNeuralSpeech({ text, language, mode });
+
+    res.setHeader('Content-Type', 'audio/mpeg');
+    res.setHeader('Content-Length', audioBuffer.length);
+    res.setHeader('Accept-Ranges', 'bytes');
+    res.setHeader('Cache-Control', 'public, max-age=3600');
+    return res.end(audioBuffer);
+
+  } catch (err) {
+    console.error('Speech synthesis error:', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to synthesize speech audio.',
+      error: err.message
+    });
+  }
+});
+
+module.exports = router;
