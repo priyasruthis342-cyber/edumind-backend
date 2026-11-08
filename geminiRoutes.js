@@ -6,16 +6,6 @@
 const express = require('express');
 const router = express.Router();
 const { GoogleGenAI } = require('@google/genai');
-const Groq = require('groq-sdk');
-
-let groqClient = null;
-if (process.env.GROQ_API_KEY) {
-  try {
-    groqClient = new Groq({ apiKey: process.env.GROQ_API_KEY });
-  } catch (e) {
-    console.warn('Groq client init warning:', e.message);
-  }
-}
 
 let MsEdgeTTS, OUTPUT_FORMAT;
 try {
@@ -108,34 +98,7 @@ async function generateWithGemini(contents, systemInstruction, mimeType = 'appli
     }
   }
 
-  // 2. High-speed Groq fallback (openai/gpt-oss-120b) if Gemini is rate limited or unavailable
-  if (groqClient) {
-    try {
-      console.log('⚡ Gemini busy/rate-limited. Switching to Groq openai/gpt-oss-120b fallback...');
-      const groqPrompt = systemInstruction
-        ? `${systemInstruction}\n\n${mimeType === 'application/json' ? 'Strict requirement: Output only a valid parseable JSON object matching the required schema.\n\n' : ''}${contents}`
-        : contents;
-
-      const completion = await withTimeout(
-        groqClient.chat.completions.create({
-          model: 'openai/gpt-oss-120b',
-          messages: [{ role: 'user', content: groqPrompt }],
-          ...(mimeType === 'application/json' ? { response_format: { type: 'json_object' } } : {})
-        }),
-        14000,
-        'Groq fallback'
-      );
-      const groqText = completion.choices[0]?.message?.content;
-      if (groqText) {
-        console.log('✅ Groq fallback generated response successfully!');
-        return groqText;
-      }
-    } catch (groqErr) {
-      console.warn('Groq fallback failed:', groqErr.message);
-    }
-  }
-
-  throw lastError || new Error('All AI models are temporarily busy. Please retry.');
+  throw lastError || new Error('Google Gemini AI is temporarily experiencing high demand. Falling back to local educational engine.');
 }
 
 /**
@@ -816,25 +779,7 @@ ${effectiveContext ? `SYLLABUS / CHAPTER CONTEXT (BACKGROUND REFERENCE ONLY - DO
         'text/plain'
       );
     } catch (aiErr) {
-      console.warn('Gemini chat error, fallback to Groq or local:', aiErr.message);
-      if (groqClient) {
-        try {
-          const completion = await withTimeout(
-            groqClient.chat.completions.create({
-              model: 'openai/gpt-oss-120b',
-              messages: [
-                { role: 'system', content: systemInstruction },
-                { role: 'user', content: query.trim() }
-              ]
-            }),
-            12000,
-            'Groq chat fallback'
-          );
-          reply = completion.choices[0]?.message?.content || '';
-        } catch (groqErr) {
-          console.warn('Groq chat fallback error:', groqErr.message);
-        }
-      }
+      console.warn('Gemini chat error, fallback to resilient local generator:', aiErr.message);
     }
 
     if (!reply || !reply.trim()) {
