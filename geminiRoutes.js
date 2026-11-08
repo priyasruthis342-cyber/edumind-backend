@@ -42,10 +42,10 @@ function getGeminiClient() {
 }
 
 const CANDIDATE_MODELS = [
-  'gemini-3.5-flash',       // Primary: active & verified working with fast latency
+  'gemini-3.5-flash-lite',  // Primary: verified active, healthy quota & ultra-fast (~800ms)
+  'gemini-3.5-flash',
   'gemini-3.7-flash',
-  'gemini-3.8-flash',
-  'gemini-3.5-flash-lite'
+  'gemini-3.8-flash'
 ];
 
 /**
@@ -95,7 +95,7 @@ async function generateWithGemini(contents, systemInstruction, mimeType = 'appli
             contents,
             config
           }),
-          25000,
+          7000,
           `Gemini (${model})`
         );
         if (response && response.text) {
@@ -730,8 +730,8 @@ CRITICAL DIRECTIVES:
 1. ZERO HARDCODED TEMPLATES & DYNAMIC STRUCTURE ADAPTATION (SUPREME PRIORITY):
    - NEVER force a rigid, pre-set multi-part template (like mandatory definition box + architecture + operations + code + output + advantages) unless the user explicitly asks for an 8-mark, 12-mark, Part B, Part C, or full essay breakdown!
    - STRICT INTENT MATCHING & ON-DEMAND COMPONENT ACTION:
-     * If the user asks for "only types", "give me a only types", "types of X", "just the categories", or "kinds of X":
-       Output ONLY the clean, structured categorized list of types with clear descriptions. DO NOT output a Definition Box. DO NOT output architecture, code, output, or advantages!
+     * If the user asks for "only types", "give me a only types", "types of X", "just the categories", "kinds of X", or asks in Tamil/English for only names/types without definitions ("டைப் மட்டும் கொடு", "நேம் மட்டும்", "டெஃபினிஷன்லாம் எதுவும் வேண்டாம்", "only names", "no definition", "just points"):
+       Output strictly ONLY the numbered or bulleted list of type names (e.g., 1. Mouse Events, 2. Keyboard Events, 3. Form Events, etc.) with ZERO definitions, ZERO explanation paragraphs, and NO definition box!
      * If the user asks for "only example" or "just an example": Output ONLY the requested example.
      * If the user asks for "only code" or "program only": Output ONLY the compilable program code and its expected execution output.
      * If the user asks for "only definition" or "definition only": Output ONLY the concise definition.
@@ -839,8 +839,10 @@ ${effectiveContext ? `SYLLABUS / CHAPTER CONTEXT (BACKGROUND REFERENCE ONLY - DO
 
     if (!reply || !reply.trim()) {
       const qLower = query.toLowerCase();
-      const wantsOnlyTypes = /only\s*types?|types?\s*only|give me (a )?only types?|just\s*types?|list\s*types?|types\s*list/i.test(qLower);
+      const wantsOnlyNames = /நேம் மட்டும்|டெஃபினிஷன்லாம் எதுவும் வேண்டாம்|டெபனிஷன் வேண்டாம்|only names|names only|no definitions?|without definition/i.test(qLower);
+      const wantsOnlyTypes = wantsOnlyNames || /only\s*types?|types?\s*only|give me (a )?only types?|just\s*types?|list\s*types?|types\s*list|டைப் மட்டும்|பாயிண்ட் பாயிண்ட்டா/i.test(qLower);
       const wantsTypes = wantsOnlyTypes || /type|category|categories|kinds|டைப்/i.test(qLower);
+      const wantsEventHandling = /event\s*handling|ஈவண்ட்|ஈவென்ட்|ஹான்லிங்|ஹேண்ட்லிங்/i.test(qLower);
       const wants12Mark = /12[-\s]?mark|essay|full breakdown|7[-\s]?part|1\.5\s*pages?/i.test(qLower);
       const wants8Mark = /8[-\s]?mark|8\s*marks|part\s*b/i.test(qLower);
       const wants2Mark = /2[-\s]?mark/i.test(qLower);
@@ -852,10 +854,38 @@ ${effectiveContext ? `SYLLABUS / CHAPTER CONTEXT (BACKGROUND REFERENCE ONLY - DO
       const wantsOnlyCode = /only\s*code|code\s*only|just\s*code|give me (a )?only code/i.test(qLower);
       const wantsOnlyExample = /only\s*example|just (an? )?example/i.test(qLower);
 
-      if (wantsOnlyTypes) {
+      if (wantsOnlyTypes && wantsEventHandling) {
+        if (wantsOnlyNames) {
+          reply = `### 📂 Types of Event Handling (Names Only):
+
+1. **Mouse Events** (Click, Double-Click, MouseDown, MouseUp, MouseMove, MouseEnter, MouseExit)
+2. **Keyboard Events** (KeyDown, KeyUp, KeyPress)
+3. **Action / Button Events** (Button Click, Menu Item Selection, Enter Key Action)
+4. **Form & Focus Events** (FocusGained, FocusLost, Change, Input, Submit, Reset)
+5. **Window / Component Events** (WindowOpened, WindowClosing, WindowClosed, WindowResized)
+6. **Item Selection Events** (CheckBox Selection, RadioButton Selection, ComboBox Item State)
+7. **Adjustment Events** (Scrollbar Scrolling, Slider Position Changes)
+8. **Touch & Gesture Events** (TouchStart, TouchMove, TouchEnd, Pinch, Swipe)`;
+        } else {
+          reply = `### 📂 Types of Event Handling
+
+1. **Inline Event Handling** (Event attributes defined directly inside UI markup/components)
+2. **Traditional / DOM Level 0 Event Handlers** (Assigning event functions to object properties like \`btn.onclick\`)
+3. **Standard Event Listeners / DOM Level 2** (\`addEventListener\` registration mechanism supporting multiple listeners)
+4. **Event Delegation & Dynamic Binding** (Single parent listener managing events from bubbling child elements)`;
+        }
+      } else if (wantsOnlyTypes) {
         // Strict intent: ONLY types, zero unrequested templates or definition boxes
-        const cleanTopic = query.replace(/give me a|give me|only types|only type|types only|types|list|of|for/gi, '').trim() || 'Core Concept';
-        reply = `### 📂 Comprehensive Classification & Types of ${cleanTopic.toUpperCase()}
+        const cleanTopic = query.replace(/give me a|give me|only types|only type|types only|types|list|of|for|டைப் மட்டும்|நேம் மட்டும்|பாயிண்ட்/gi, '').trim() || 'Core Concept';
+        if (wantsOnlyNames) {
+          reply = `### 📂 Types of ${cleanTopic.toUpperCase()} (Names Only):
+
+1. **Primitive / Built-in Fundamental Types**
+2. **Derived / Reference Composite Types**
+3. **User-Defined / Abstract Data Types (ADTs)**
+4. **Parameterized / Generic Types**`;
+        } else {
+          reply = `### 📂 Comprehensive Classification & Types of ${cleanTopic.toUpperCase()}
 
 1. **Primitive / Built-in Fundamental Types:**
    - **Core Purpose:** Fundamental atomic building blocks provided directly by the programming language specification.
@@ -880,6 +910,7 @@ ${effectiveContext ? `SYLLABUS / CHAPTER CONTEXT (BACKGROUND REFERENCE ONLY - DO
    - **Memory & Storage:** Instantiated at compile-time via monomorphization (C++ templates) or bytecode type erasure (Java generics).
    - **Key Characteristics:** Absolute type safety, zero runtime performance penalty, high code reusability.
    - **Representative Examples:** \`std::vector<T>\`, \`ArrayList<E>\`, Key-Value Maps (\`Map<K, V>\`), and Monadic Optionals.`;
+        }
       } else if (wantsFrequency) {
         reply = `### 📊 University Exam Frequency & Importance Analysis: **${query.trim()}**
 
