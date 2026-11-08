@@ -670,22 +670,25 @@ function generateLocalExamQA(prompt, language = 'en') {
  * POST /api/gemini/chat
  * Interactive Gemini AI Study Assistant Chat.
  * Answers custom queries: definitions, code snippets, derivations, 12-mark essay answers.
+ * Supports image/photo attachments for solving handwritten notes & question sheets.
  */
 router.post('/chat', async (req, res) => {
   try {
-    const { query, context = '', language = 'en' } = req.body;
+    const { query, context = '', language = 'en', imageBase64, mimeType = 'image/jpeg' } = req.body;
 
-    if (!query || typeof query !== 'string' || !query.trim()) {
+    if ((!query || typeof query !== 'string' || !query.trim()) && !imageBase64) {
       return res.status(400).json({
         success: false,
-        message: 'query is required.'
+        message: 'query or imageBase64 is required.'
       });
     }
 
-    const isTamil = language === 'ta' || /[\u0B80-\u0BFF]/.test(query);
+    const effectiveQuery = (query && query.trim()) || 'Please analyze this attached study image, handwritten note, or question sheet. Transcribe the contents, understand the question, and provide the complete, accurate, step-by-step solution and explanation.';
+
+    const isTamil = language === 'ta' || /[\u0B80-\u0BFF]/.test(effectiveQuery);
 
     // Strict Chat Box Focus: Completely ignore background document context UNLESS user explicitly asks to summarize the scan
-    const isExplicitScanRequest = /summary|summarize|scanned|this pdf|this document|uploaded file|from notes|from scan|in this pdf|in this scan/i.test(query);
+    const isExplicitScanRequest = /summary|summarize|scanned|this pdf|this document|uploaded file|from notes|from scan|in this pdf|in this scan/i.test(effectiveQuery);
     const effectiveContext = isExplicitScanRequest ? (context || '') : '';
 
     const langGuideline = `LANGUAGE & DEFINITION FORMAT REQUIREMENTS:
@@ -699,14 +702,21 @@ router.post('/chat', async (req, res) => {
   * Code, variable names, and technical terms must NEVER be translated into Tamil.`;
 
     const systemInstruction = `You are an advanced, context-aware AI study assistant inside EduMind AI, functioning with the intelligence and capabilities of Gemini and ChatGPT.
+You can read text, transcribe messy handwriting, examine diagrams, solve mathematical formulas, and write university-grade answers.
 
 CRITICAL DIRECTIVES:
 
-1. ZERO HARDCODED TEMPLATES & DYNAMIC STRUCTURE ADAPTATION (SUPREME PRIORITY):
-   - NEVER force a rigid, pre-set multi-part template (like mandatory definition box + architecture + operations + code + output + advantages) unless the user explicitly asks for an 8-mark, 12-mark, Part B, Part C, or full essay breakdown!
+1. IMAGE & HANDWRITING SOLVER DIRECTIVE:
+   - When an image (handwritten note, textbook question, exam problem, diagram, or formula) is attached:
+     * Transcribe any handwritten questions or problems with high accuracy.
+     * Solve the exact question or problem shown in the image thoroughly with full step-by-step working, mathematical derivations, clean code, or diagrams.
+     * Clearly state the final answer or conclusion.
+
+2. ZERO HARDCODED TEMPLATES & DYNAMIC STRUCTURE ADAPTATION (SUPREME PRIORITY):
+   - NEVER force a rigid, pre-set multi-part template unless the user explicitly asks for an 8-mark, 12-mark, Part B, Part C, or full essay breakdown!
    - STRICT INTENT MATCHING & ON-DEMAND COMPONENT ACTION:
      * If the user asks for "only types", "give me a only types", "types of X", "just the categories", "kinds of X", or asks in Tamil/English for only names/types without definitions ("டைப் மட்டும் கொடு", "நேம் மட்டும்", "டெஃபினிஷன்லாம் எதுவும் வேண்டாம்", "only names", "no definition", "just points"):
-       Output strictly ONLY the numbered or bulleted list of type names (e.g., 1. Mouse Events, 2. Keyboard Events, 3. Form Events, etc.) with ZERO definitions, ZERO explanation paragraphs, and NO definition box!
+       Output strictly ONLY the numbered or bulleted list of type names with ZERO definitions, ZERO explanation paragraphs, and NO definition box!
      * If the user asks for "only example" or "just an example": Output ONLY the requested example.
      * If the user asks for "only code" or "program only": Output ONLY the compilable program code and its expected execution output.
      * If the user asks for "only definition" or "definition only": Output ONLY the concise definition.
@@ -714,67 +724,21 @@ CRITICAL DIRECTIVES:
      * If the user asks a normal question (e.g. "what is polymorphism?", "difference between stack and queue"): Answer directly, concisely, and cleanly without unrequested template headers.
      * ONLY generate full 8-mark or 12-mark multi-part formats when the user EXPLICITLY asks for "8-mark", "12-mark", "essay", "Part B", or "Part C"!
 
-2. STRICT CHAT BOX FOCUS & CONTEXT ISOLATION:
+3. STRICT CHAT BOX FOCUS & CONTEXT ISOLATION:
    - You must STRICTLY and EXCLUSIVELY answer what the user is currently typing, asking, correcting, or searching for in their message in real time.
    - Completely ignore previously scanned documents, chapters, or syllabus text unless the user explicitly asks: "summarize this scan", "what is in my uploaded document?", "from the notes".
-   - If the student provides a correction or clarification (e.g. "that's not what I asked", "not that type", "explain operators instead", "answer for my given input", "அந்த மாதிரி அந்த டைப்லாம் இல்லை"): IMMEDIATELY pivot 100% to their newly specified topic. Never repeat, defend, or stay stuck on previous topics (such as linked lists, arrays, or trees).
+   - If the student provides a correction or clarification: IMMEDIATELY pivot 100% to their newly specified topic. Never repeat, defend, or stay stuck on previous topics.
 
-3. LANGUAGE & DEFINITION FORMAT:
+4. LANGUAGE & DEFINITION FORMAT:
 ${langGuideline}
 
-4. ACCURATE UNIVERSITY EXAM MARK FORMATS (ONLY WHEN EXPLICITLY REQUESTED):
+5. ACCURATE UNIVERSITY EXAM MARK FORMATS (ONLY WHEN EXPLICITLY REQUESTED):
    - 2-Marks: Concise, accurate, and direct (approx 2 to 3 sentences, formal definition, law, or formula with unit/example).
    - 3-Marks: Slightly more detailed than 2-marks (approx 4 to 5 bullet points, formal definition + key characteristics or mini-example).
    - 8-Marks (Part B Standard - approx 1 page length):
-     Must strictly follow the 5-part university exam presentation format in clear markdown (NEVER raw JSON or broken '\\n'):
-     ### 1. Definition & Core Concept
-     > **DEFINITION BOX:** [Formal definition statement and background]
-     ### 2. Detailed Architecture / Structure
-     - 4-5 bullet points covering structure, memory layout, components, and reference pointers.
-     ### 3. Core Operations & Time Complexity
-     - Step-by-step algorithms for essential operations with explicit Big-O notation (Time: O(...) | Space: O(...)).
-     ### 4. Clean Compilable Code & Exact Output
-     \`\`\`<language>
-     // Clean compilable code with proper indentation and descriptive comments
-     \`\`\`
-     **Expected Execution Output:**
-     \`\`\`text
-     [Exact terminal output matching the code above]
-     \`\`\`
-     ### 5. Advantages, Disadvantages & University Summary
-     - Clear bullet points of pros, cons, and university exam key scoring tips.
+     Must strictly follow the 5-part university exam presentation format in clear markdown (Definition, Architecture/Structure, Operations & Complexity, Clean Compilable Code & Output, Advantages/Disadvantages).
    - 12-Marks (Part C Standard - EXHAUSTIVE ~1.5 PAGES LENGTH, ~1000 to 1400 WORDS):
-     Must generate an exhaustive, high-scoring university master essay structured across 8 comprehensive sections:
-     ### 1. Detailed Introduction & Formal Academic Definition Box
-     - In-depth theoretical background, computational motivation, and why it is essential in modern computing.
-     > **DEFINITION BOX:** [Formal academic definition statement with foundational axioms]
-     ### 2. Architecture & Working Mechanism (with Diagram)
-     - Deep technical explanation of internal architecture, memory layout, components, and data flow.
-     - Include a clean, valid Mermaid flowchart/diagram illustrating the mechanism.
-     ### 3. Comprehensive Types / Categories Breakdown
-     - Exhaustive breakdown of ALL types/variations/categories of the topic.
-     - For EACH type, provide: Title, Formal Definition, Working Mechanism, and Mini Example.
-     ### 4. Step-by-Step Core Operations & Algorithmic Mechanics
-     - In-depth algorithmic breakdown of all core operations (Creation, Insertion, Deletion, Search, Traversal).
-     - Step-by-step numbered logic.
-     - Explicit Asymptotic Complexity Table (Best, Average, Worst Case Time Complexity, Auxiliary Space Complexity).
-     ### 5. Full Clean Compilable Code Implementation
-     - Production-quality compilable code (C++, Java, or Python) with exhaustive inline comments, boundary checking, and clean structure.
-     ### 6. Exact Terminal Execution Output
-     - Complete, realistic terminal output matching the code execution.
-     ### 7. Real-World Industrial Use Cases & System Applications
-     - 3 to 4 concrete enterprise/OS-level applications (e.g. Linux Kernel memory management, Redis caching, database B-tree indexing, browser navigation).
-     ### 8. Comprehensive Advantages, Disadvantages & University Scoring Strategy
-     - Detailed advantages & disadvantages.
-     - Exact examiner scoring tips (keywords, diagrams, and proof steps needed to secure 12/12 marks).
-
-5. GENERAL STUDY & UNIVERSITY INQUIRIES & REPEATED QUESTION ANALYSIS:
-   - The AI must intelligently handle general academic questions, explain how many times a topic has appeared as an important question in university exams, and accurately respond to any general study-related queries asked by the user.
-   - When asked about exam importance or frequency (e.g. "How many times has this appeared?", "Is this question repeated?", "Important questions"):
-     * Explain university exam frequency clearly (e.g. "Repeated 4 times in recent university semester exams — High Frequency Part B topic, approx 85% probability").
-     * Highlight typical question setter patterns (e.g., "1. With a neat diagram, explain... (8 Marks)", "2. Compare and contrast X and Y... (8 Marks)").
-     * Give examiners' key scoring criteria (how to secure full marks).
-   - If the user asks general questions (e.g., "How to study operators?", "What are the types of operators in C++/Java?", "How to prepare for semester exams?", "How to get O grade?"), respond thoroughly, accurately, and supportively.
+     Must generate an exhaustive, high-scoring university master essay structured across 8 comprehensive sections.
 
 6. STRICT MERMAID.JS DIAGRAM RULES:
    - When a flowchart, diagram, or architecture visual is requested, generate a valid Mermaid.js code block (\`\`\`mermaid ... \`\`\`).
@@ -783,10 +747,24 @@ ${langGuideline}
 
 ${effectiveContext ? `SYLLABUS / CHAPTER CONTEXT (BACKGROUND REFERENCE ONLY - DO NOT LET THIS OVERRIDE USER QUERY):\n${effectiveContext.slice(0, 4000)}` : ''}`;
 
+    let userContents = `Student Request: ${effectiveQuery}`;
+    if (imageBase64) {
+      const cleanBase64 = imageBase64.replace(/^data:[^;]+;base64,/, '');
+      userContents = [
+        {
+          role: 'user',
+          parts: [
+            { inlineData: { mimeType, data: cleanBase64 } },
+            { text: `Student Request with Attached Image:\n${effectiveQuery}\n\nPlease examine the attached image (photo, handwritten notes, exam question sheet, diagram). Accurately understand what is written or drawn, solve the question thoroughly with clear step-by-step logic, derivations, and clean code or diagrams where needed.` }
+          ]
+        }
+      ];
+    }
+
     let reply = '';
     try {
       reply = await generateWithGemini(
-        `Student Request: ${query.trim()}`,
+        userContents,
         systemInstruction,
         'text/plain'
       );
