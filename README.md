@@ -49,3 +49,4 @@ curl http://localhost:5050/api/health
 - **Build Command:** `npm install`
 - **Start Command:** `npm start`
 - Ensure all environment variables from `.env.example` are added in the deployment platform dashboard.
+
