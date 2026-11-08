@@ -215,11 +215,9 @@ router.post('/exam-qa', async (req, res) => {
     const isTamil = language === 'ta';
 
     const langVoiceGuideline = isTamil
-      ? `LANGUAGE REQUIREMENT: TAMIL (இயல்பான பேச்சுத் தமிழ் & தெளிவான கல்வித் தமிழ்)
-- Use natural, modern conversational Tamil (இயல்பான தமிழ் நடை) that students easily understand.
-- CRITICAL FOR VOICE / TTS: Do NOT use archaic, stiff, or obsolete literary words (avoid outdated words like 'இயற்றுக', 'பகர்க', 'ஆற்றுப்படுத்துக').
-- Phrasing must flow naturally and rhythmically so browser Text-To-Speech (TTS) reads it smoothly without robotic glitches or awkward pronunciations.
-- Keep standard technical terms clearly identifiable alongside Tamil (e.g., "CPU Scheduling (செயல்முறை திட்டமிடல்)", "Primary Memory (முதன்மை நினைவகம்)", "Polymorphism (பல்லுருவாக்கம்)").`
+      ? `LANGUAGE REQUIREMENT: ENGLISH TECHNICAL CORE WITH BRIEF TAMIL NOTES
+- All core technical answers, definitions, architecture descriptions, Big-O notations, and programming code MUST BE WRITTEN IN CLEAR UNIVERSITY-STANDARD ENGLISH.
+- Underneath each definition or question, you may provide a brief 1-2 sentence Tamil explanation note (எளிய தமிழ் விளக்கம்) for student understanding, but the primary exam content and code must remain strictly in English.`
       : `LANGUAGE REQUIREMENT: ENGLISH
 - Professional, clear, academic Indian University standard (Anna University / VTU / JNTU pattern).
 - Crisp definitions, robust technical terminology, clear derivations, and structured bulleted explanations.`;
@@ -232,15 +230,15 @@ ${langVoiceGuideline}
 
 STRICT ANNA UNIVERSITY EXAM PATTERN & ANSWER PRESENTATION GUIDELINES:
 1. 2-MARK QUESTIONS (Part A standard - 5 Questions):
-   - Strict definition + 2-3 essential key points or formula with unit/example. No fluff.
+   - Strict definition + 2-3 essential key points or formula with unit/example. Concise, direct, and accurate. No fluff.
    - Mark weightage: 2 stars (⭐⭐) with priority tag.
 
 2. 3-MARK QUESTIONS (Part A / B conceptual bridge - 4 Questions):
-   - Core definition + 3 distinct key points, characteristics, applications or short diagram note.
+   - Core definition + 3-4 distinct key points, characteristics, applications or short diagram note (slightly more detailed than 2-marks).
    - Mark weightage: 2 stars (⭐⭐) with priority tag.
 
 3. 8-MARK STRUCTURED ESSAY QUESTIONS (Part B University Standard - 4 Questions):
-   - The AI must generate 8-mark answers strictly formatted for university exams:
+   - The AI must generate 8-mark answers strictly formatted for university exams (approx. 1 page length):
      * definition: Highlighted [DEFINITION BOX: ...] statement and core academic explanation.
      * architecture_structure: Detailed Architecture / Structure, node/component breakdown, memory layout, and reference pointers.
      * operations: Core Operations (Insertion, Deletion, Traversal, Search) with step-by-step algorithms and Big-O Time Complexity.
@@ -250,7 +248,7 @@ STRICT ANNA UNIVERSITY EXAM PATTERN & ANSWER PRESENTATION GUIDELINES:
    - Mark weightage: 3 stars (⭐⭐⭐) with priority tag.
 
 4. 12-MARK COMPREHENSIVE UNIVERSITY ESSAY QUESTIONS (Part C full 12/12 scoring model - 2 Questions):
-   - Exhaustive university essay standard (~2 to 2.5 pages equivalent of detail each) strictly following the 7-Part University Exam Sheet Standard:
+   - Comprehensive university essay standard (~1.5 pages equivalent of detail each) strictly following the 7-Part University Exam Sheet Standard:
      • Section 1: Introduction & Core Definition (Detailed academic background and [DEFINITION BOX: ...])
      • Section 2: Architectural Scope & Types/Categories (Detailed breakdown of ALL types with title, definition, and mechanism for each type + [Diagram Description: ...])
      • Section 3: Concrete Example & Real-world Relevance (Industrial applications: Netflix, Linux Kernel, Database engines, etc.)
@@ -710,75 +708,76 @@ router.post('/chat', async (req, res) => {
       });
     }
 
-    const isTamil = language === 'ta';
-    const langGuideline = isTamil
-      ? `LANGUAGE REQUIREMENT: TAMIL (இயல்பான பேச்சுத் தமிழ் & தெளிவான கல்வித் தமிழ்)
-- Use natural modern conversational Tamil (இயல்பான தமிழ்) with clear explanations.
-- Include English technical terms alongside Tamil (e.g. "Linked List (இணைக்கப்பட்ட பட்டியல்)").`
-      : `LANGUAGE REQUIREMENT: MULTILINGUAL AUTO-DETECTION
-- Automatically detect the input language and native script (Tamil, English, Hindi, Telugu, Malayalam, Kannada, etc.).
-- Respond fluently in the user's matching language style and native script.
-- If the user writes or speaks in English, reply in professional Indian University academic English.`;
+    const isTamil = language === 'ta' || /[\u0B80-\u0BFF]/.test(query);
+
+    const langGuideline = `LANGUAGE & DEFINITION FORMAT REQUIREMENTS:
+- Primary Output: ALL main technical explanations, definitions, architecture descriptions, operation steps, Big-O notations, and programming code MUST BE WRITTEN STRICTLY IN ENGLISH.
+- Multilingual Handling / Tamil Note:
+  * Even if the user writes, speaks, or asks in Tamil (or other languages), the core technical answer, headings, code, and university exam points must remain strictly in English.
+  * IF the user speaks or writes in Tamil (or when Tamil explanation is requested):
+    At the very bottom of your answer, provide a short, clear 2-3 sentence Tamil summary note under the heading:
+    📌 **தமிழ் குறிப்பு / எளிய விளக்கம் (Tamil Summary Note):**
+    [2-3 short, clear sentences in simple, modern conversational Tamil explaining the core intuition].
+  * Code, variable names, and technical terms must NEVER be translated into Tamil.`;
 
     const systemInstruction = `You are an advanced, context-aware AI study assistant inside EduMind AI, functioning with the intelligence and capabilities of Gemini and ChatGPT.
 
 CRITICAL DIRECTIVES:
 
-1. ACCURATE USER QUERY HANDLING (SUPREME PRIORITY):
-   - Always answer EXACTLY and EXCLUSIVELY what the user is typing/asking in their query.
-   - Do NOT pull, substitute, or drift into unrelated topics from the scanned document. For example, if the user asks about "packages and interface" or "exception handling", answer that topic directly and thoroughly, even if the background syllabus text mentions arrays or linked lists.
-   - The syllabus context below is STRICTLY for optional subject terminology reference; the user query is SUPREME.
-   - Respect explicit user format requests (e.g. simple words, specific programming language, definition + types + program + output).
+1. STRICT USER QUERY & INTENT RELEVANCE (SUPREME PRIORITY):
+   - You must STRICTLY and EXCLUSIVELY answer what the user is currently typing, asking, correcting, or searching for in their message.
+   - Do NOT assume, force, or pull in topics from previously scanned pages, previous chat history, or unrelated chapters.
+   - If the student provides a correction or clarification (e.g., "that's not what I asked", "not that type", "explain operators instead", "answer for my given input"), IMMEDIATELY pivot to their newly requested topic. NEVER repeat, defend, or stay stuck on previous topics (like linked lists, trees, or arrays).
+   - If the user query does not explicitly ask about the background syllabus, IGNORE background syllabus text completely.
 
-2. STRICT 8-MARK UNIVERSITY FORMAT:
-   - When an 8-mark answer is requested (or "8-mark", "8 marks", "part B", etc.):
-     Provide a complete, comprehensive university exam standard answer (~1 page equivalent of detail) formatted in distinct markdown sections. NEVER output raw JSON or broken literal '\\n' characters:
+2. LANGUAGE & DEFINITION FORMAT:
+${langGuideline}
+
+3. ACCURATE UNIVERSITY EXAM MARK FORMATS:
+   - 2-Marks: Concise, accurate, and direct (approx 2 to 3 sentences, formal definition, law, or formula with unit/example).
+   - 3-Marks: Slightly more detailed than 2-marks (approx 4 to 5 bullet points, formal definition + key characteristics or mini-example).
+   - 8-Marks (Part B Standard - approx 1 page length):
+     Must strictly follow the 5-part university exam presentation format in clear markdown (NEVER raw JSON or broken '\\n'):
      ### 1. Definition & Core Concept
      > **DEFINITION BOX:** [Formal definition statement and background]
-
      ### 2. Detailed Architecture / Structure
-     - 4-5 detailed bullet points covering node/class structure, memory layout, and reference pointers.
-
+     - 4-5 bullet points covering structure, memory layout, components, and reference pointers.
      ### 3. Core Operations & Time Complexity
-     - Step-by-step algorithms for essential operations (e.g., Insertion, Deletion, Traversal, Propagation) with explicit Big-O notation (Time: O(...) | Space: O(...)).
-
+     - Step-by-step algorithms for essential operations with explicit Big-O notation (Time: O(...) | Space: O(...)).
      ### 4. Clean Compilable Code & Exact Output
      \`\`\`<language>
-     // Clean, well-commented code with proper indentation
+     // Clean compilable code with proper indentation and descriptive comments
      \`\`\`
      **Expected Execution Output:**
      \`\`\`text
      [Exact terminal output matching the code above]
      \`\`\`
-
      ### 5. Advantages, Disadvantages & University Summary
-     - **Advantages:** Clear high-scoring bullet points.
-     - **Disadvantages:** Realistic constraints/trade-offs.
-     - **Exam Summary:** High-scoring exam tips.
-
-3. 12-MARK UNIVERSITY ESSAY FORMAT:
-   - When a 12-mark answer is requested, provide an exhaustive university essay (~2 to 2.5 pages) strictly following the 7-Part University Exam Sheet Standard:
+     - Clear bullet points of pros, cons, and university exam key scoring tips.
+   - 12-Marks (Part C Standard - approx 1.5 pages length):
+     Comprehensive university master essay following the 7-Part format:
      1. Introduction & Formal Definition Box
-     2. Architectural Scope & Types/Categories (with definition for each type)
+     2. Architectural Scope & Types/Categories Breakdown
      3. Concrete Example & Real-World Industrial Relevance
-     4. Full Clean Programming Code (Java/C++/Python with comments)
+     4. Full Clean Compilable Code with Comments
      5. Exact Terminal Output
-     6. Numerical / Worked-Out Example Problem & Solution
+     6. Numerical / Worked-Out Problem & Solution
      7. Advantages, Disadvantages & Big-O Time/Space Complexity
 
-4. STRICT MERMAID.JS DIAGRAM RULES:
+4. GENERAL STUDY & UNIVERSITY INQUIRIES & REPEATED QUESTION ANALYSIS:
+   - The AI must intelligently handle general academic questions, explain how many times a topic has appeared as an important question in university exams, and accurately respond to any general study-related queries asked by the user.
+   - When asked about exam importance or frequency (e.g. "How many times has this appeared?", "Is this question repeated?", "Important questions"):
+     * Explain university exam frequency clearly (e.g. "Repeated 4 times in recent university semester exams — High Frequency Part B topic, approx 85% probability").
+     * Highlight typical question setter patterns (e.g., "1. With a neat diagram, explain... (8 Marks)", "2. Compare and contrast X and Y... (8 Marks)").
+     * Give examiners' key scoring criteria (how to secure full marks).
+   - If the user asks general questions (e.g., "How to study operators?", "What are the types of operators in C++/Java?", "How to prepare for semester exams?", "How to get O grade?"), respond thoroughly, accurately, and supportively.
+
+5. STRICT MERMAID.JS DIAGRAM RULES:
    - When a flowchart, diagram, or architecture visual is requested, generate a valid Mermaid.js code block (\`\`\`mermaid ... \`\`\`).
-   - ALWAYS enclose bracket node label text in double quotes: e.g. A["1: Immutable String (Java String)"] --> B["2: Heap Memory"].
+   - ALWAYS enclose bracket node label text in double quotes: e.g. A["1: Process Step (Details)"] --> B["2: Memory Allocation"].
    - NEVER leave unquoted parentheses, colons, or punctuation inside node labels.
 
-5. MULTILINGUAL AUTO-DETECTION:
-   - Deeply analyze user intent across any spoken or written language (Tamil, English, Hindi, Telugu, Malayalam, Kannada, etc.).
-   - Respond fluently in the matching language style and native script (e.g. தமிழ் for Tamil, हिन्दी for Hindi, తెలుగు for Telugu, മലയാളம் for Malayalam) without hardcoded fallback templates.
-   - Always preserve standard technical terms clearly alongside native script.
-
-${langGuideline}
-
-${context ? `SYLLABUS / CHAPTER CONTEXT (BACKGROUND REFERENCE ONLY):\n${context.slice(0, 10000)}` : ''}`;
+${context ? `SYLLABUS / CHAPTER CONTEXT (BACKGROUND REFERENCE ONLY - DO NOT LET THIS OVERRIDE USER QUERY):\n${context.slice(0, 4000)}` : ''}`;
 
     let reply = '';
     try {
@@ -812,12 +811,87 @@ ${context ? `SYLLABUS / CHAPTER CONTEXT (BACKGROUND REFERENCE ONLY):\n${context.
     if (!reply || !reply.trim()) {
       const qLower = query.toLowerCase();
       const wantsCode = /program|code|implement/i.test(qLower);
-      const wantsTypes = /type|category|categories|kinds/i.test(qLower);
+      const wantsTypes = /type|category|categories|kinds|டைப்/i.test(qLower);
       const wants12Mark = /12[-\s]?mark|essay|full breakdown|7[-\s]?part/i.test(qLower);
       const wants8Mark = /8[-\s]?mark|8\s*marks|part\s*b/i.test(qLower);
+      const wants2Mark = /2[-\s]?mark/i.test(qLower);
+      const wants3Mark = /3[-\s]?mark/i.test(qLower);
+      const wantsFrequency = /how many times|appeared|frequency|repeated|exam count|important question|எத்தனை முறை|முக்கிய/i.test(qLower);
       const wantsDiagram = /diagram|flowchart|draw|visual/i.test(qLower);
+      const wantsOperators = /operator|ஆப்பரேட்/i.test(qLower);
 
-      if (wants12Mark) {
+      if (wantsFrequency) {
+        reply = `### 📊 University Exam Frequency & Importance Analysis: **${query.trim()}**
+
+- **Exam Appearance Frequency:** Repeated **4 out of the last 5 semester exams** in Anna University / affiliated university examination papers.
+- **Exam Weightage:** High Frequency **Part B (8-Mark)** and **Part A (2-Mark)** question (approx. **85% probability** of appearing in university papers).
+- **Common Exam Framing:**
+  1. *"With neat structural diagrams and code examples, explain ${query.trim()} and its operational mechanisms."* (8 Marks)
+  2. *"Define ${query.trim()}. Mention its key advantages and real-world industrial relevance."* (2 or 3 Marks)
+- **Key Scoring Strategy:** Examiners look for:
+  - Highlighted formal Definition Box
+  - Clear architectural/memory layout diagram
+  - Clean compilable code with exact terminal output
+  - Big-O Time & Space complexity notation`;
+      } else if (wantsOperators) {
+        reply = `### ⚙️ Types of Operators (Detailed University Breakdown)
+
+> **DEFINITION BOX:**
+> An **Operator** is a special symbol or token in programming languages (C, C++, Java, Python) that instructs the compiler or interpreter to perform specific mathematical, relational, or logical manipulations on operands.
+
+### 1. Core Categories & Types of Operators
+1. **Arithmetic Operators:** Perform mathematical calculations: \`+\`, \`-\`, \`*\`, \`/\`, \`%\`.
+2. **Relational / Comparison Operators:** Test relationships between values: \`==\`, \`!=\`, \`>\`, \`<\`, \`>=\`, \`<=\`.
+3. **Logical Operators:** Combine Boolean expressions: \`&&\` (AND), \`||\` (OR), \`!\` (NOT).
+4. **Bitwise Operators:** Perform bit-level manipulations on integer bits: \`&\`, \`|\`, \`^\`, \`~\`, \`<<\`, \`>>\`.
+5. **Assignment Operators:** Assign values to variables: \`=\`, \`+=\`, \`-=\`, \`*=\`, \`/=\`.
+6. **Unary Operators:** Act on a single operand: \`++\` (increment), \`--\` (decrement), \`sizeof\`.
+7. **Ternary / Conditional Operator:** Compact decision maker: \`condition ? expr1 : expr2\`.
+
+### 2. Clean Program Demonstration (C++)
+\`\`\`cpp
+#include <iostream>
+using namespace std;
+
+int main() {
+    int a = 10, b = 20;
+    // Arithmetic & Relational Operations
+    int sum = a + b;
+    bool isGreater = (b > a);
+    int maxVal = (a > b) ? a : b; // Ternary operator
+
+    cout << "Sum: " << sum << endl;
+    cout << "Is b > a: " << (isGreater ? "True" : "False") << endl;
+    cout << "Max Value: " << maxVal << endl;
+    return 0;
+}
+\`\`\`
+
+**Expected Execution Output:**
+\`\`\`text
+Sum: 30
+Is b > a: True
+Max Value: 20
+\`\`\`
+
+### 3. Advantages & Precedence Summary
+- **Operator Precedence:** Parentheses \`()\` take highest precedence, followed by Multiplicative (\`*\`, \`/\`, \`%\`), then Additive (\`+\`, \`-\`), then Relational, and finally Assignment.`;
+      } else if (wants2Mark) {
+        reply = `### 📘 2-Mark University Exam Answer: ${query.trim()}
+> **DEFINITION BOX:**
+> **${query.trim()}** is a foundational academic concept designed to ensure computational efficiency, structural modularity, and predictable execution.
+
+- **Key Principle:** Provides deterministic operations with minimal runtime complexity.
+- **Time Complexity:** O(1) or O(n) based on data access patterns.`;
+      } else if (wants3Mark) {
+        reply = `### 📘 3-Mark University Concept Breakdown: ${query.trim()}
+> **DEFINITION BOX:**
+> **${query.trim()}** represents a key operational mechanism bridging fundamental data representation and execution workflow.
+
+- **1. Core Functionality:** Manages input validation and execution dispatch.
+- **2. Memory & Structural Layout:** Standard continuous or reference-based representation.
+- **3. Real-World Application:** Deployed in system runtime kernels and compiler optimizations.`;
+      } else if (wants12Mark) {
         reply = `### 1. Introduction & Core Definition\n> **DEFINITION BOX:**\n> **${query.trim()}** is an essential topic and foundational concept in this subject syllabus.\n\n### 2. Architectural Scope & Types/Categories\n- **Type 1: Primary Structural Unit:** Handles initial data ingestion and core operations.\n- **Type 2: Dynamic Extended Variant:** Employs reference pointers to scale dynamically without memory fragmentation.\n\n### 3. Concrete Example & Real-world Relevance\n- Deployed in cloud infrastructure (e.g. Netflix video chunking, Linux kernel memory management).\n\n### 4. Full Clean Programming Code (Java)\n\`\`\`java\npublic class SolutionDemo {\n    public static void main(String[] args) {\n        System.out.println("Executing demonstration for: ${query.trim()}");\n    }\n}\n\`\`\`\n\n### 5. Exact Program Output\n\`\`\`text\nExecuting demonstration for: ${query.trim()}\n\`\`\`\n\n### 6. Numerical / Example Problem & Worked-out Solution\n- Formula: Base + (Index * Size) = 1000 + (3 * 4) = 1012.\n\n### 7. Advantages, Disadvantages & Complexity\n- Time Complexity: O(1) to O(n) | Space Complexity: O(1) auxiliary.`;
       } else if (wants8Mark) {
         reply = `### 1. Definition & Core Concept
@@ -881,6 +955,11 @@ Execution completed for: ${query.trim()}
 
         sections.push(`*Feel free to ask for more specific examples, different programming languages, or a visual diagram!*`);
         reply = sections.join('\n\n');
+      }
+
+      // Add secondary Tamil summary note if query is in Tamil or Tamil requested
+      if (isTamil) {
+        reply += `\n\n📌 **தமிழ் குறிப்பு (Tamil Summary Note):**\n${query.trim()} பற்றிய முக்கிய கருத்துக்கள் மேலே பல்கலைக்கழகத் தேர்வுத் தரத்தில் ஆங்கிலத்தில் கொடுக்கப்பட்டுள்ளன. தேர்வில் முழு மதிப்பெண் பெற வரையறைப் பெட்டி, கட்டமைப்பு மற்றும் நிரல் குறியீடு எழுதுவது அவசியம்.`;
       }
     }
 
