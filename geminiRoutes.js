@@ -7,6 +7,21 @@ const express = require('express');
 const router = express.Router();
 const crypto = require('crypto');
 const { GoogleGenAI } = require('@google/genai');
+const { cleanMathFormatting } = require('./mathFormatter');
+
+function sanitizeObjectMath(obj) {
+  if (!obj) return obj;
+  if (typeof obj === 'string') return cleanMathFormatting(obj);
+  if (Array.isArray(obj)) return obj.map(sanitizeObjectMath);
+  if (typeof obj === 'object') {
+    const res = {};
+    for (const [k, v] of Object.entries(obj)) {
+      res[k] = sanitizeObjectMath(v);
+    }
+    return res;
+  }
+  return obj;
+}
 
 // ─────────────────────────────────────────────────────────────
 // High-Speed In-Memory LRU Audio Cache
@@ -356,14 +371,14 @@ Schema:
     } catch (parseErr) {
       console.warn('Failed to parse Gemini JSON output. Falling back to local syllabus generator:', parseErr.message);
       const localData = generateLocalExamQA(prompt, language);
-      return res.status(200).json({
+      return res.status(200).json(sanitizeObjectMath({
         success: true,
         provider: 'local-resilient',
         ...localData
-      });
+      }));
     }
 
-    return res.status(200).json({
+    return res.status(200).json(sanitizeObjectMath({
       success: true,
       provider: 'google-gemini',
       chapter_title: parsed.chapter_title || 'Syllabus & Theory Study',
@@ -373,16 +388,16 @@ Schema:
       questions_5mark: parsed.questions_8mark || parsed.questions_5mark || [],
       questions_8mark: parsed.questions_8mark || parsed.questions_5mark || [],
       questions_12mark: parsed.questions_12mark || []
-    });
+    }));
 
   } catch (err) {
     console.warn('Gemini Exam Q&A fallback to local university question generator:', err.message);
     const localData = generateLocalExamQA(req.body?.prompt || '', req.body?.language || 'en');
-    return res.status(200).json({
+    return res.status(200).json(sanitizeObjectMath({
       success: true,
       provider: 'local-resilient',
       ...localData
-    });
+    }));
   }
 });
 
@@ -729,21 +744,69 @@ CRITICAL DIRECTIVES:
    - Completely ignore previously scanned documents, chapters, or syllabus text unless the user explicitly asks: "summarize this scan", "what is in my uploaded document?", "from the notes".
    - If the student provides a correction or clarification: IMMEDIATELY pivot 100% to their newly specified topic. Never repeat, defend, or stay stuck on previous topics.
 
-4. LANGUAGE & DEFINITION FORMAT:
+4. STRICT PURE MATHEMATICAL & SCIENTIFIC NOTATION (ZERO RAW LATEX / NO DOLLAR SIGNS):
+   - ABSOLUTELY NEVER return raw LaTeX or wrap expressions, formulas, variables, or Big-O notations in dollar signs ($...$ or $...$).
+   - NEVER use raw backslash LaTeX commands (e.g. NEVER output \infty, \log, \text{}, \frac, \le, \ge, \pm, \neq, \times, \sum, \int, \{ \}).
+   - Always format ALL mathematical, algorithmic, and numerical formulas using clean, natural Unicode and readable text arithmetic notation:
+     * Variables & letters: u, v, x, y, n, m, k (write bare, NEVER $u$ or $v$).
+     * Exponents & Powers: x², x³, xⁿ, O(V²), O(E log V), O(n log n), 2ⁿ (use Unicode superscripts).
+     * Math operators & symbols: ∞, √, ±, ×, ÷, ≤, ≥, ≠, ≈, ∈, ∉, ∑, ∏, θ, α, β, π, Δ.
+     * Formulas: Write on clear standalone lines, e.g.:
+       Balance Factor = Height(Left Subtree) - Height(Right Subtree)
+       Allowed values = {-1, 0, +1}
+       x = (-b ± √(b² - 4ac)) / (2a)
+
+5. DEDICATED STEP-BY-STEP PROBLEM SOLVING & NUMERICAL CALCULATIONS:
+   - When a student asks to solve a math problem, equation, derivation, numerical sum, or algorithm step-by-step (e.g., quadratic equations, probability, AVL tree rotations, Dijkstra/Prim's trace, matrix operations, calculus):
+     YOU MUST RESPOND WITH THIS DEDICATED 4-PART MATHEMATICAL STRUCTURE:
+     
+     **Given Data:**
+     - List each given value, parameter, equation, or graph/tree state clearly with units.
+     
+     **Formula / Approach:**
+     - State the exact formula, theorem, or algorithmic principle to apply (in clean Unicode).
+     
+     **Step-by-Step Calculation:**
+     - Number each calculation step (Step 1, Step 2, Step 3...).
+     - Show the numerical substitution, intermediate reduction, and arithmetic working explicitly.
+     - Bold key intermediate values so the student can follow easily.
+     
+     **Final Answer:**
+     - State the final result clearly and prominently in a bold summary box or bullet (e.g. **Final Answer: x = 2 or x = 3**).
+   - Strictly avoid generic fluff or computer code unless code was explicitly requested.
+
+6. DIAGRAMS, FLOWCHARTS & DATA STRUCTURE TREES (AVL, BST, HEAPS, GRAPHS):
+   - When users ask for a flowchart, process diagram, tree structure (e.g., AVL Tree, Binary Search Tree, Heap, B-Tree), graph, or visual block diagram:
+     * Render clean, readable ASCII text tree art inside a \`\`\`text or \`\`\`ascii code fence OR a valid Mermaid.js block (\`\`\`mermaid ... \`\`\`).
+     * For AVL Trees: ALWAYS illustrate the tree shapes before and after rotation (LL, RR, LR, RL) with balance factors clearly marked!
+       Example:
+       \`\`\`text
+             30 (BF: +2)                     20 (BF: 0)
+            /                               /  \
+          20 (BF: +1)   --- LL Rotate ---> 10    30
+         /
+       10 (BF: 0)
+       \`\`\`
+       Or using Mermaid:
+       \`\`\`mermaid
+       graph TD
+           subgraph Balanced AVL State
+           B["20 (BF: 0)"] --> A["10 (BF: 0)"]
+           B --> C["30 (BF: 0)"]
+           end
+           \`\`\`
+     * For Mermaid flowcharts: ALWAYS quote node labels: e.g. A["Step 1 (Initialize)"] --> B["Step 2 (Compare)"].
+
+7. LANGUAGE & DEFINITION FORMAT:
 ${langGuideline}
 
-5. ACCURATE UNIVERSITY EXAM MARK FORMATS (ONLY WHEN EXPLICITLY REQUESTED):
+8. ACCURATE UNIVERSITY EXAM MARK FORMATS (ONLY WHEN EXPLICITLY REQUESTED):
    - 2-Marks: Concise, accurate, and direct (approx 2 to 3 sentences, formal definition, law, or formula with unit/example).
    - 3-Marks: Slightly more detailed than 2-marks (approx 4 to 5 bullet points, formal definition + key characteristics or mini-example).
    - 8-Marks (Part B Standard - approx 1 page length):
      Must strictly follow the 5-part university exam presentation format in clear markdown (Definition, Architecture/Structure, Operations & Complexity, Clean Compilable Code & Output, Advantages/Disadvantages).
    - 12-Marks (Part C Standard - EXHAUSTIVE ~1.5 PAGES LENGTH, ~1000 to 1400 WORDS):
      Must generate an exhaustive, high-scoring university master essay structured across 8 comprehensive sections.
-
-6. STRICT MERMAID.JS DIAGRAM RULES:
-   - When a flowchart, diagram, or architecture visual is requested, generate a valid Mermaid.js code block (\`\`\`mermaid ... \`\`\`).
-   - ALWAYS enclose bracket node label text in double quotes: e.g. A["1: Process Step (Details)"] --> B["2: Memory Allocation"].
-   - NEVER leave unquoted parentheses, colons, or punctuation inside node labels.
 
 ${effectiveContext ? `SYLLABUS / CHAPTER CONTEXT (BACKGROUND REFERENCE ONLY - DO NOT LET THIS OVERRIDE USER QUERY):\n${effectiveContext.slice(0, 4000)}` : ''}`;
 
@@ -1226,7 +1289,7 @@ Execution completed for: ${query.trim()}
     return res.status(200).json({
       success: true,
       provider: 'gemini-assistant',
-      answer: reply.trim()
+      answer: cleanMathFormatting(reply.trim())
     });
 
   } catch (err) {
@@ -1527,7 +1590,9 @@ TRANSCRIPTION INSTRUCTIONS:
 1. Accurately transcribe and reconstruct all readable handwritten notes, definitions, formulas, questions, code, bullet points, and headings.
 2. Intelligently decipher difficult or messy handwriting using academic and technical context (computer science, engineering, physics, chemistry, mathematics, medicine, school syllabus). Fix obvious pen stroke ambiguities based on technical vocabulary (e.g., 'Operating System', 'Pointer', 'Velocity', 'Linked List', 'Inheritance', 'Algorithm').
 3. NEVER invent random symbols or output isolated garbage characters (e.g., DO NOT output '©', '®', '™', standalone semicolons, random single letters like 'PE ©', 'Ey', '. p='). If a character or line is illegible noise, omit the garbage characters and preserve only coherent words.
-4. If a formula or mathematical expression is present, write it out clearly in plain text or standard math notation (e.g., E = mc^2, O(n log n), V = IR).
+4. STRICT PURE MATHEMATICAL & FORMULA NOTATION (ZERO RAW LATEX / NO DOLLAR SIGNS):
+   - Never output raw LaTeX or wrap formulas, variables, or expressions in dollar signs ($...$ or $...$).
+   - If equations, matrices, or formulas are present, transcribe them cleanly using readable standard Unicode characters (e.g., x² + 5x + 6 = 0, O(V²), O(E log V), E = mc², V = IR, Balance Factor = Height(L) - Height(R)).
 5. Preserve logical paragraphs, numbered lists, bullet points, and section titles.
 6. Output ONLY the clean transcribed study text directly. Do not wrap in markdown code block backticks (no \`\`\`), do not add conversational remarks like "Here is the extracted text:".`;
 
@@ -1589,7 +1654,7 @@ TRANSCRIPTION INSTRUCTIONS:
 
     return res.status(200).json({
       success: true,
-      text: extractedText
+      text: cleanMathFormatting(extractedText)
     });
   } catch (err) {
     console.error('Gemini image extraction error:', err.message);

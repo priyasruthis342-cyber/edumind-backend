@@ -6,6 +6,21 @@ require('dotenv').config(); // Load from current working directory
 require('dotenv').config({ path: path.join(__dirname, '.env') }); // Load from backend/.env
 
 const express = require('express');
+const { cleanMathFormatting } = require('./mathFormatter');
+
+function sanitizeAiModule(obj) {
+  if (!obj) return obj;
+  if (typeof obj === 'string') return cleanMathFormatting(obj);
+  if (Array.isArray(obj)) return obj.map(sanitizeAiModule);
+  if (typeof obj === 'object') {
+    const res = {};
+    for (const [k, v] of Object.entries(obj)) {
+      res[k] = sanitizeAiModule(v);
+    }
+    return res;
+  }
+  return obj;
+}
 const mongoose = require('mongoose');
 const { GoogleGenAI } = require('@google/genai');
 const { MongoMemoryServer } = require('mongodb-memory-server');
@@ -261,6 +276,7 @@ app.post('/api/ai/ask', async (req, res) => {
 
   const systemMessage = `You are EduMind AI, an elite university examination preparation assistant powered exclusively by Google Gemini.
 Analyze the user's study text/topic and generate a comprehensive study module.
+STRICT PURE MATHEMATICAL NOTATION: Never use raw LaTeX dollar signs ($...$ or $...$) or backslash commands (e.g. \text, \infty). Always write formulas, complexity bounds, and equations in clean Unicode (e.g. x² + 5x + 6 = 0, O(V²), ∞).
 Respond ONLY with a valid JSON object — NO markdown code fences, NO comments, NO extra text outside the JSON.
 
 Required JSON format:
