@@ -48,8 +48,8 @@ function getGeminiClient() {
 
 const CANDIDATE_GEMINI_MODELS = [
   'gemini-3.5-flash-lite',  // Primary: fastest response time & high rate limits
+  'gemini-3.1-flash-lite',
   'gemini-3.5-flash',
-  'gemini-3.7-flash',
   'gemini-3.8-flash'
 ];
 
@@ -348,7 +348,7 @@ STRICT CONSTRAINTS:
               temperature: 0.3
             }
           }),
-          new Promise((_, reject) => setTimeout(() => reject(new Error(`Timeout on ${model}`)), 4000))
+          new Promise((_, reject) => setTimeout(() => reject(new Error(`Timeout on ${model}`)), 12000))
         ]);
 
         const rawText = response?.text;

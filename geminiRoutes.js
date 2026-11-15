@@ -59,9 +59,9 @@ function getGeminiClient() {
 }
 
 const CANDIDATE_MODELS = [
-  'gemini-3.5-flash-lite',  // Primary: verified active, healthy quota & ultra-fast (~800ms)
+  'gemini-3.5-flash-lite',  // Primary: verified active, healthy quota & ultra-fast (~500ms)
+  'gemini-3.1-flash-lite',  // Ultra-fast secondary fallback (~1000ms)
   'gemini-3.5-flash',
-  'gemini-3.7-flash',
   'gemini-3.8-flash'
 ];
 
@@ -112,7 +112,7 @@ async function generateWithGemini(contents, systemInstruction, mimeType = 'appli
             contents,
             config
           }),
-          7000,
+          10000,
           `Gemini (${model})`
         );
         if (response && response.text) {
@@ -702,6 +702,10 @@ router.post('/chat', async (req, res) => {
 
     const isTamil = language === 'ta' || /[\u0B80-\u0BFF]/.test(effectiveQuery);
 
+    const now = new Date();
+    const currentIST = now.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'full', timeStyle: 'medium' });
+    const currentDay = now.toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', weekday: 'long' });
+
     // Strict Chat Box Focus: Completely ignore background document context UNLESS user explicitly asks to summarize the scan
     const isExplicitScanRequest = /summary|summarize|scanned|this pdf|this document|uploaded file|from notes|from scan|in this pdf|in this scan/i.test(effectiveQuery);
     const effectiveContext = isExplicitScanRequest ? (context || '') : '';
@@ -717,9 +721,26 @@ router.post('/chat', async (req, res) => {
   * Code, variable names, and technical terms must NEVER be translated into Tamil.`;
 
     const systemInstruction = `You are an advanced, context-aware AI study assistant inside EduMind AI, functioning with the intelligence and capabilities of Gemini and ChatGPT.
-You can read text, transcribe messy handwriting, examine diagrams, solve mathematical formulas, and write university-grade answers.
+You can read text, transcribe messy handwriting, examine diagrams, solve mathematical formulas, answer general knowledge and curriculum queries, and generate visual assets.
 
 CRITICAL DIRECTIVES:
+
+0. REAL-TIME TEMPORAL CONTEXT & GENERAL CURRICULUM MASTERY:
+   - Live Temporal Knowledge: Current Date & Time: ${currentIST} (${currentDay}, Indian Standard Time / IST). Current Year: ${now.getFullYear()}.
+   - Answer any questions about today's date, current time, day of week, or current year instantly and accurately.
+   - Broad Educational Syllabus Knowledge: Comfortably and accurately answer queries on any subject or grade level:
+     * School standards (6th to 12th standard CBSE, ICSE, and Tamil Nadu Samacheer Kalvi curricula, including 12th Standard Physics, Chemistry, Mathematics, Biology, Computer Science, and Commerce).
+     * College & Engineering: Anna University (R2021/R2017), Autonomous Engineering colleges, Arts, Science, Medical.
+     * Competitive exams: TNPSC, NEET, JEE, GATE, UPSC.
+     * General inquiries, definitions, real-world applications, and coding.
+
+1. ON-DEMAND MULTIMEDIA & VISUAL ASSET GENERATION:
+   - When the user asks for diagrams, flowcharts, trees, tables, or pictures/images:
+     * Mermaid Diagrams: When a flowchart, system diagram, or process is requested, output clean Mermaid.js syntax inside \`\`\`mermaid ... \`\`\` blocks with quoted labels.
+     * Markdown Tables: When comparisons, tabular differences, or summaries are requested, output clean, structured Markdown tables (| Feature | A | B |).
+     * Educational Images & Pictures: When the user asks to see an image, picture, photo, or visual diagram of an object, organ, scientific structure, or phenomenon (e.g. "show me a picture of X", "image of Y", "draw a diagram of Z"):
+       Embed an educational image card using markdown syntax:
+       ![Educational Visual](https://image.pollinations.ai/prompt/<url-encoded-descriptive-educational-prompt>?width=800&height=500&nologo=true)
 
 1. IMAGE & HANDWRITING SOLVER DIRECTIVE:
    - When an image (handwritten note, textbook question, exam problem, diagram, or formula) is attached:

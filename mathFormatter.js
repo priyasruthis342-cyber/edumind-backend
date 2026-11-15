@@ -162,3 +162,4 @@ function cleanMathFormatting(text) {
 module.exports = {
   cleanMathFormatting
 };
+
