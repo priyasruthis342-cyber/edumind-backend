@@ -1840,88 +1840,35 @@ router.post('/math-teacher-lesson', async (req, res) => {
     }
 
     const hasTamil = /[\u0B80-\u0BFF]/.test(userText);
-    const hasHindi = /[\u0900-\u097F]/.test(userText);
-    const hasTelugu = /[\u0C00-\u0C7F]/.test(userText);
-    const hasMalayalam = /[\u0D00-\u0D7F]/.test(userText);
-    const hasKannada = /[\u0C80-\u0CFF]/.test(userText);
+    const isEnglishQuestion = !hasTamil;
 
-    let effectiveLang = language || 'ta';
-    if (hasTamil) effectiveLang = 'ta';
-    else if (hasHindi) effectiveLang = 'hi';
-    else if (hasTelugu) effectiveLang = 'te';
-    else if (hasMalayalam) effectiveLang = 'ml';
-    else if (hasKannada) effectiveLang = 'kn';
-
-    const langDirectives = {
-      ta: {
-        langName: 'Tamil (தமிழ்)',
-        greeting: 'வணக்கம்! நான் உங்கள் கணித ஆசிரியை. வாருங்கள், இந்த கணக்கை மிக எளிமையாக ஒன்றாக படிப்போம்!',
-        readyPrompt: 'கரும்பலகையில் கேள்வியையும் சூத்திரத்தையும் எழுதியாச்சு! நாம் பாடத்தை தொடங்கலாமா?',
-        instruction: 'Use 100% natural, everyday spoken Tamil (இயல்பான எளிய அன்றாடப் பேச்சுத் தமிழ்). Absolutely NO heavy archaic bookish words. Speak like a sweet, enthusiastic school teacher explaining to children with love and warmth.'
-      },
-      hi: {
-        langName: 'Hindi (हिन्दी)',
-        greeting: 'नमस्ते! मैं आपकी गणित अध्यापिका हूँ। आइए, इस गणित के सवाल को बहुत ही आसान तरीके से सीखते हैं!',
-        readyPrompt: 'मैंने ब्लैकबोर्ड पर प्रश्न और सूत्र लिख दिए हैं! क्या हम शुरू करें?',
-        instruction: 'Use natural, everyday spoken conversational Hindi. Warm, friendly and easy to understand.'
-      },
-      te: {
-        langName: 'Telugu (తెలుగు)',
-        greeting: 'నమస్కారం! నేను మీ గణిత ఉపాధ్యాయురాలిని. రండి, ఈ గణిత సమస్యను చాలా సులభంగా నేర్చుకుందాం!',
-        readyPrompt: 'నేను బోర్డుపై ప్రశ్న మరియు సూత్రాలను రాశాను! మనం ప్రారంభించవచ్చా?',
-        instruction: 'Use natural, everyday conversational Telugu.'
-      },
-      ml: {
-        langName: 'Malayalam (മലയാളം)',
-        greeting: 'നമസ്കാരം! ഞാൻ നിങ്ങളുടെ ഗണിത അധ്യാപികയാണ്. നമുക്ക് ഈ കണക്ക് വളരെ എളുപ്പത്തിൽ പഠിക്കാം!',
-        readyPrompt: 'ഞാൻ ബോർഡിൽ ചോദ്യവും സൂത്രവാക്യങ്ങളും എഴുതിയിട്ടുണ്ട്! നമുക്ക് തുടങ്ങാമോ?',
-        instruction: 'Use natural, everyday spoken Malayalam.'
-      },
-      kn: {
-        langName: 'Kannada (ಕನ್ನಡ)',
-        greeting: 'ನಮಸ್ಕಾರ! ನಾನು ನಿಮ್ಮ ಗಣಿತ ಶಿಕ್ಷಕಿ. ಬನ್ನಿ, ಈ ಲೆಕ್ಕವನ್ನು ಸುಲಭವಾಗಿ ಕಲಿಯೋಣ!',
-        readyPrompt: 'ನಾನು ಬೋರ್ಡ್ ಮೇಲೆ ಪ್ರಶ್ನೆ ಮತ್ತು ಸೂತ್ರಗಳನ್ನು ಬರೆದಿದ್ದೇನೆ! ನಾವು ಶುರು ಮಾಡೋಣವೇ?',
-        instruction: 'Use natural, everyday conversational Kannada.'
-      },
-      en: {
-        langName: 'English',
-        greeting: 'Hello! I am your Math Teacher. Let us break down and solve this math problem step-by-step!',
-        readyPrompt: 'I have written the question, formula, and steps on the chalkboard! Shall we start?',
-        instruction: 'Use warm, friendly, encouraging conversational English suitable for students.'
-      }
-    };
-
-    const targetLang = langDirectives[effectiveLang] || langDirectives.en;
+    // LANGUAGE RULES AS REQUESTED:
+    // 1. If English question: Written blackboard is in English, spoken explanation is in natural everyday Tamil ("idhu eppadi vandhuchu").
+    // 2. If Tamil question: Written blackboard is in Tamil, spoken explanation is in natural everyday Tamil.
+    const boardLanguage = isEnglishQuestion ? 'English' : 'Tamil (தமிழ்)';
+    const spokenLanguage = 'Tamil (தமிழ்) - Natural everyday spoken Tamil (இயல்பான எளிய அன்றாடப் பேச்சுத் தமிழ்)';
 
     const systemInstruction = `You are the AI Math Teacher Girl inside EDU Mind AI.
-You are a friendly, sweet, cute, and highly encouraging mathematics teacher standing in front of a classroom chalkboard.
+You are a warm, sweet, encouraging female mathematics teacher standing in front of a classroom chalkboard.
 
-MISSION:
-The student has provided a math question, equation, problem, or math syllabus topic:
-"${userText}"
+PEDAGOGICAL & LANGUAGE RULES (HIGHEST PRIORITY):
+1. WRITTEN BLACKBOARD CONTENT ("board_content"):
+   - MUST BE WRITTEN IN: ${boardLanguage}.
+   - ${isEnglishQuestion ? 'Since the user question is in English, write the question, formula, steps, calculations, marking tips, and final answer STRICTLY IN CLEAR UNIVERSITY-STANDARD ENGLISH so the student can copy it into their exam answer sheet.' : 'Since the user question is in Tamil, write all steps, formulas, and answers in Tamil.'}
+   - All formulas and calculations must use clean Unicode (NO raw LaTeX $ or \\).
 
-You must:
-1. TARGET LANGUAGE: Write EVERYTHING strictly in ${targetLang.langName}.
-2. Tone: ${targetLang.instruction}
-3. Blackboard Board Content:
-   - "question": Clean, formatted mathematical statement of the problem (in clean Unicode, NO raw LaTeX dollar signs or backslash syntax).
-   - "core_formula": The exact formula or theorem to solve this problem (clean Unicode, e.g. x = (-b ± √(b² - 4ac)) / (2a)).
-   - "given_data": Extracted parameters/given values.
-   - "steps": Array of 3 to 6 steps. Each step must have:
-     * "step_number": integer
-     * "title": Short title (e.g. "Step 1: Identifying given values")
-     * "work": Clear calculation line (Unicode math)
-     * "marking_tip": Crucial exam presentation advice explaining how this specific step earns marks in school/university exams (e.g., "1 Mark awarded for correct formula substitution").
-   - "final_answer": Prominent final answer with units if applicable.
-   - "exam_presentation_tip": Key tip for scoring 100% marks in exams on this type of question.
-4. "ready_prompt": The question asking if the student is ready to start (e.g. "${targetLang.readyPrompt}").
-5. "teacher_dialogue": The teacher's warm spoken walkthrough explaining the problem and teaching the lesson in simple conversational language.
-6. "spoken_audio_script": Clean plain text script for text-to-speech audio narration.
+2. SPOKEN WALKTHROUGH & AUDIO SCRIPT ("teacher_dialogue" and "spoken_audio_script"):
+   - MUST BE SPOKEN IN NATURAL, EVERYDAY SPOKEN TAMIL (இயல்பான எளிய அன்றாடப் பேச்சுத் தமிழ்)!
+   - Explain how each step was derived, step by step, and why/how that result came ("இது எப்படி வந்தது"):
+     e.g., "வணக்கம்! கரும்பலகையில நான் ஸ்டெப் பை ஸ்டெப் தீர்வு எழுதியிருக்கேன். முதல் படியில என்ன கொடுத்திருக்காங்கனு பார்க்கலாம்... இந்த எண்கள் எப்படி வந்ததுனா... இதை தேர்வில் இப்படி எழுதினால் முழு மதிப்பெண் கிடைக்கும்..."
+   - NO heavy bookish or archaic Tamil words. Speak in a gentle, caring female teacher voice that students easily understand without hesitation or stuttering.
+
+3. "ready_prompt": "கரும்பலகையில் கேள்வியையும் சூத்திரத்தையும் எழுதியாச்சு! நாம் பாடத்தை தொடங்கலாமா? (Shall we start?)"
 
 Return ONLY a valid JSON object matching:
 {
-  "greeting": "${targetLang.greeting}",
-  "detected_topic": "Topic Name in ${targetLang.langName}",
+  "greeting": "வணக்கம்! நான் உங்கள் கணித ஆசிரியை. வாருங்கள், இந்த கணக்கை மிக எளிமையாக ஒன்றாக படிப்போம்!",
+  "detected_topic": "${isEnglishQuestion ? 'Topic Title in English' : 'Topic Title in Tamil'}",
   "board_content": {
     "question": "...",
     "core_formula": "...",
@@ -1937,9 +1884,9 @@ Return ONLY a valid JSON object matching:
     "final_answer": "...",
     "exam_presentation_tip": "..."
   },
-  "ready_prompt": "${targetLang.readyPrompt}",
-  "teacher_dialogue": "...",
-  "spoken_audio_script": "..."
+  "ready_prompt": "கரும்பலகையில் கேள்வியையும் சூத்திரத்தையும் எழுதியாச்சு! நாம் பாடத்தை தொடங்கலாமா?",
+  "teacher_dialogue": "Spoken walkthrough in natural everyday conversational Tamil explaining how each step works and idhu eppadi vandhuchu...",
+  "spoken_audio_script": "Clean script in natural everyday conversational Tamil for female TTS narration..."
 }`;
 
     let rawText = null;
@@ -1969,120 +1916,120 @@ Return ONLY a valid JSON object matching:
 
       if (isProb) {
         parsed = {
-          greeting: targetLang.greeting,
-          detected_topic: effectiveLang === 'ta' ? 'நிகழ்தகவு (Probability of Dice Sum)' : 'Probability (Dice Outcomes)',
+          greeting: 'வணக்கம்! நான் உங்கள் கணித ஆசிரியை. வாருங்கள், இந்த கணக்கை மிக எளிமையாக ஒன்றாக படிப்போம்!',
+          detected_topic: isEnglishQuestion ? 'Probability (Dice Outcomes & Sum)' : 'நிகழ்தகவு (பகடை கூடுதல் கணக்கு)',
           board_content: {
             question: userText,
             core_formula: 'P(Event E) = n(E) / n(S)',
-            given_data: 'Two unbiased dice rolled: Total sample space n(S) = 6 × 6 = 36.',
+            given_data: isEnglishQuestion ? 'Two unbiased dice rolled: Total sample space n(S) = 6 × 6 = 36.' : 'இரண்டு பகடைகள் உருட்டப்படுகின்றன: மொத்த மாதிரி வெளி n(S) = 6 × 6 = 36.',
             steps: [
               {
                 step_number: 1,
-                title: effectiveLang === 'ta' ? 'படி 1: மொத்த மாதிரி வெளி n(S) கண்டறிதல்' : 'Step 1: Total Sample Space n(S)',
+                title: isEnglishQuestion ? 'Step 1: Determine Total Sample Space n(S)' : 'படி 1: மொத்த மாதிரி வெளி n(S) கண்டறிதல்',
                 work: 'n(S) = {(1,1), (1,2), ..., (6,6)} → n(S) = 36',
-                marking_tip: '1 Mark: Stating n(S) = 36 explicitly secures immediate step marks.'
+                marking_tip: isEnglishQuestion ? '1 Mark: Stating n(S) = 36 explicitly secures immediate step marks.' : '1 மதிப்பெண்: n(S) = 36 என்று தெளிவாக எழுதுங்கள்.'
               },
               {
                 step_number: 2,
-                title: effectiveLang === 'ta' ? 'படி 2: கூடுதல் 9 அல்லது அதற்கு மேல் வரும் நிகழ்வுகள்' : 'Step 2: Outcomes with Sum ≥ 9',
+                title: isEnglishQuestion ? 'Step 2: List Favorable Pairs with Sum ≥ 9' : 'படி 2: கூடுதல் 9 அல்லது அதற்கு மேல் வரும் நிகழ்வுகள்',
                 work: 'Sum = 9: (3,6), (4,5), (5,4), (6,3) [4 pairs]\nSum = 10: (4,6), (5,5), (6,4) [3 pairs]\nSum = 11: (5,6), (6,5) [2 pairs]\nSum = 12: (6,6) [1 pair]',
-                marking_tip: '2 Marks: Listing all 10 favorable pairs systematically demonstrates clear working.'
+                marking_tip: isEnglishQuestion ? '2 Marks: Listing all 10 favorable pairs systematically demonstrates clear working.' : '2 மதிப்பெண்: 10 சாதகமான ஜோடிகளையும் வரிசையாக எழுதுங்கள்.'
               },
               {
                 step_number: 3,
-                title: effectiveLang === 'ta' ? 'படி 3: சாதகமான நிகழ்வுகளின் எண்ணிக்கை n(E)' : 'Step 3: Total Favorable Outcomes n(E)',
+                title: isEnglishQuestion ? 'Step 3: Count Total Favorable Outcomes n(E)' : 'படி 3: சாதகமான நிகழ்வுகளின் எண்ணிக்கை n(E)',
                 work: 'n(E) = 4 + 3 + 2 + 1 = 10 favorable pairs',
-                marking_tip: '1 Mark: Accurate summation of favorable outcomes.'
+                marking_tip: isEnglishQuestion ? '1 Mark: Accurate summation of favorable outcomes.' : '1 மதிப்பெண்: கூடுதல் எண்ணிக்கை சரியாக கணக்கிடவும்.'
               },
               {
                 step_number: 4,
-                title: effectiveLang === 'ta' ? 'படி 4: நிகழ்தகவு கணக்கிடுதல்' : 'Step 4: Compute Probability',
+                title: isEnglishQuestion ? 'Step 4: Compute Probability' : 'படி 4: நிகழ்தகவு கணக்கிடுதல்',
                 work: 'P(Sum ≥ 9) = n(E) / n(S) = 10 / 36 = 5 / 18 ≈ 0.2778',
-                marking_tip: '1 Mark: Simplification to lowest fractional terms (5/18).'
+                marking_tip: isEnglishQuestion ? '1 Mark: Simplification to lowest fractional terms (5/18).' : '1 மதிப்பெண்: எளிய பின்ன வடிவில் (5/18) எழுதுங்கள்.'
               }
             ],
             final_answer: 'P(Sum ≥ 9) = 5/18 (or ≈ 0.278)',
-            exam_presentation_tip: 'Always state both the unreduced fraction (10/36) and the simplified fraction (5/18) boxed neatly.'
+            exam_presentation_tip: isEnglishQuestion ? 'Always state both the unreduced fraction (10/36) and the simplified fraction (5/18) boxed neatly.' : 'இறுதி விடையை 5/18 என்று பெட்டிக்குள் எழுதி காட்டவும்.'
           },
-          ready_prompt: targetLang.readyPrompt,
-          teacher_dialogue: targetLang.greeting + ' ' + targetLang.readyPrompt,
-          spoken_audio_script: targetLang.greeting + ' ' + targetLang.readyPrompt
+          ready_prompt: 'கரும்பலகையில் கேள்வியையும் சூத்திரத்தையும் எழுதியாச்சு! நாம் பாடத்தை தொடங்கலாமா?',
+          teacher_dialogue: 'வணக்கம்! கரும்பலகையில தீர்வு எழுதியிருக்கேன். ரெண்டு பகடைகள் உருட்டும்போது மொத்தம் 36 வாய்ப்புகள் வரும். கூடுதல் 9 அல்லது அதற்கு மேல் வர 10 ஜோடிகள் உள்ளன. இது எப்படி வந்ததுனா, கூடுதல் 9-க்கு 4 ஜோடிகள், 10-க்கு 3 ஜோடிகள், 11-க்கு 2 ஜோடிகள், 12-க்கு 1 ஜோடி. மொத்தம் 10. ஆகவே நிகழ்தகவு 10 வகுத்தல் 36, சுருக்கினால் 5 வகுத்தல் 18. ஆரம்பிக்கலாமா?',
+          spoken_audio_script: 'வணக்கம்! கரும்பலகையில தீர்வு எழுதியிருக்கேன். ரெண்டு பகடைகள் உருட்டும்போது மொத்தம் 36 வாய்ப்புகள் வரும். கூடுதல் 9 அல்லது அதற்கு மேல் வர 10 ஜோடிகள் உள்ளன. இது எப்படி வந்ததுனா, 10 வகுத்தல் 36, சுருக்கினால் 5 வகுத்தல் 18. ஆரம்பிக்கலாமா?'
         };
       } else if (isQuad) {
         parsed = {
-          greeting: targetLang.greeting,
-          detected_topic: effectiveLang === 'ta' ? 'இருபடிச் சமன்பாடுகள் (Quadratic Equations)' : 'Quadratic Equations (Factorization & Roots)',
+          greeting: 'வணக்கம்! நான் உங்கள் கணித ஆசிரியை. வாருங்கள், இந்த கணக்கை மிக எளிமையாக ஒன்றாக படிப்போம்!',
+          detected_topic: isEnglishQuestion ? 'Quadratic Equations (Factorization & Roots)' : 'இருபடிச் சமன்பாடுகள் (காரணிப்படுத்துதல் & மூலங்கள்)',
           board_content: {
             question: userText,
             core_formula: 'x = (-b ± √(b² - 4ac)) / (2a)  or  (x + p)(x + q) = 0',
-            given_data: 'Standard form: ax² + bx + c = 0',
+            given_data: isEnglishQuestion ? 'Standard form: ax² + bx + c = 0' : 'வடிவம்: ax² + bx + c = 0',
             steps: [
               {
                 step_number: 1,
-                title: effectiveLang === 'ta' ? 'படி 1: காரணிகளை அடையாளம் காணுதல்' : 'Step 1: Identify Sum and Product Factors',
-                work: 'Find numbers p, q such that p + q = b and p × q = a × c',
-                marking_tip: '1 Mark: Demonstrating factorization principle.'
+                title: isEnglishQuestion ? 'Step 1: Identify Factor Numbers (Sum & Product)' : 'படி 1: காரணிகளை அடையாளம் காணுதல்',
+                work: 'Find numbers p, q such that sum = 5 and product = 6 → Numbers are 2 and 3',
+                marking_tip: isEnglishQuestion ? '1 Mark: Demonstrating factorization principle with correct pairs.' : '1 மதிப்பெண்: சரியான கூட்டல் மற்றும் பெருக்கல் எண்களை கண்டறிதல்.'
               },
               {
                 step_number: 2,
-                title: effectiveLang === 'ta' ? 'படி 2: சமன்பாட்டை காரணிப்படுத்துதல்' : 'Step 2: Factorize the Equation',
-                work: 'Rewrite and group terms: (x + p)(x + q) = 0',
-                marking_tip: '2 Marks: Clear grouping of terms.'
+                title: isEnglishQuestion ? 'Step 2: Factorize the Equation' : 'படி 2: சமன்பாட்டை காரணிப்படுத்துதல்',
+                work: '(x + 2)(x + 3) = 0',
+                marking_tip: isEnglishQuestion ? '2 Marks: Clear factorization into linear factors.' : '2 மதிப்பெண்: நேரியல் காரணிகளாக பிரித்து எழுதுதல்.'
               },
               {
                 step_number: 3,
-                title: effectiveLang === 'ta' ? 'படி 3: மூலங்களை (Roots) கண்டறிதல்' : 'Step 3: Solve for Roots',
-                work: 'x + p = 0  →  x = -p\nx + q = 0  →  x = -q',
-                marking_tip: '1 Mark: Isolating both distinct roots with correct signs.'
+                title: isEnglishQuestion ? 'Step 3: Solve for Roots' : 'படி 3: மூலங்களை (Roots) கண்டறிதல்',
+                work: 'x + 2 = 0 → x = -2\nx + 3 = 0 → x = -3',
+                marking_tip: isEnglishQuestion ? '1 Mark: Isolating both roots with correct signs.' : '1 மதிப்பெண்: இரண்டு மூலங்களையும் சரியான குறியுடன் எழுதுங்கள்.'
               }
             ],
-            final_answer: 'Roots: x₁ and x₂ (boxed neatly)',
-            exam_presentation_tip: 'Always verify your roots by substituting them back into the original quadratic equation.'
+            final_answer: 'x = -2,  x = -3',
+            exam_presentation_tip: isEnglishQuestion ? 'Always box your final roots neatly and verify by substitution.' : 'இறுதி விடைகளான x=-2 மற்றும் x=-3-ஐ கட்டமிட்டு எழுதுங்கள்.'
           },
-          ready_prompt: targetLang.readyPrompt,
-          teacher_dialogue: targetLang.greeting + ' ' + targetLang.readyPrompt,
-          spoken_audio_script: targetLang.greeting + ' ' + targetLang.readyPrompt
+          ready_prompt: 'கரும்பலகையில் கேள்வியையும் சூத்திரத்தையும் எழுதியாச்சு! நாம் பாடத்தை தொடங்கலாமா?',
+          teacher_dialogue: 'வணக்கம்! இந்த சமன்பாட்டை பாருங்கள். இரண்டு எண்களை பெருக்கினால் ஆறு வர வேண்டும், கூட்டினால் ஐந்து வர வேண்டும். இது எப்படி வந்ததுனா, ரெண்டும் மூணும் பெருக்கினால் ஆறு, கூட்டினால் ஐந்து. அதனால் காரணி (x+2)(x+3)=0. இதிலிருந்து x சமம் -2, x சமம் -3 என்று எளிதாக விடை கிடைக்கும். ஆரம்பிக்கலாமா?',
+          spoken_audio_script: 'வணக்கம்! இந்த சமன்பாட்டை பாருங்கள். இரண்டு எண்களை பெருக்கினால் ஆறு வர வேண்டும், கூட்டினால் ஐந்து வர வேண்டும். இது எப்படி வந்ததுனா, ரெண்டும் மூணும் பெருக்கினால் ஆறு, கூட்டினால் ஐந்து. அதனால் விடை x சமம் -2 மற்றும் x சமம் -3. ஆரம்பிக்கலாமா?'
         };
       } else {
         parsed = {
-          greeting: targetLang.greeting,
-          detected_topic: effectiveLang === 'ta' ? 'கணிதத் தீர்வு (Step-by-Step Mathematical Solution)' : 'Step-by-Step Mathematical Solution',
+          greeting: 'வணக்கம்! நான் உங்கள் கணித ஆசிரியை. வாருங்கள், இந்த கணக்கை மிக எளிமையாக ஒன்றாக படிப்போம்!',
+          detected_topic: isEnglishQuestion ? 'Step-by-Step Mathematical Solution' : 'கணிதத் தீர்வு (படிப் படியான முறை)',
           board_content: {
             question: userText,
-            core_formula: 'Standard Mathematical Formulation & Theorems',
-            given_data: 'Extracted from problem statement',
+            core_formula: 'Governing Formula & Theorems',
+            given_data: isEnglishQuestion ? 'Extracted parameters from problem statement' : 'கொடுக்கப்பட்ட விவரங்கள்',
             steps: [
               {
                 step_number: 1,
-                title: effectiveLang === 'ta' ? 'படி 1: கொடுக்கப்பட்ட விவரங்களை எழுதுதல்' : 'Step 1: Analyze Given Parameters',
+                title: isEnglishQuestion ? 'Step 1: Write Given Parameters & Target' : 'படி 1: கொடுக்கப்பட்ட விவரங்களை எழுதுதல்',
                 work: userText,
-                marking_tip: '1 Mark: Clearly write down given values and target variable.'
+                marking_tip: isEnglishQuestion ? '1 Mark: Clearly state given data on answer sheet.' : '1 மதிப்பெண்: கொடுக்கப்பட்ட விவரங்களை தெளிவாக எழுதுங்கள்.'
               },
               {
                 step_number: 2,
-                title: effectiveLang === 'ta' ? 'படி 2: உரிய கணித சூத்திரத்தை பிரதியிடுதல்' : 'Step 2: Formula & Substitution',
-                work: 'Substitute numerical parameters into the primary governing formula.',
-                marking_tip: '2 Marks: Step marks are awarded for formula writing and substitution.'
+                title: isEnglishQuestion ? 'Step 2: Apply Governing Mathematical Formula' : 'படி 2: உரிய கணித சூத்திரத்தை பிரதியிடுதல்',
+                work: 'Substitute numerical parameters into principle equation.',
+                marking_tip: isEnglishQuestion ? '2 Marks: Formula presentation and correct substitution.' : '2 மதிப்பெண்: சூத்திரத்தில் சரியான எண்களை பிரதியிடுங்கள்.'
               },
               {
                 step_number: 3,
-                title: effectiveLang === 'ta' ? 'படி 3: படிப் படியாக சுருக்குதல்' : 'Step 3: Systematic Calculation',
-                work: 'Simplify arithmetic and algebraic operations line by line.',
-                marking_tip: '1 Mark: Never skip intermediate lines of working.'
+                title: isEnglishQuestion ? 'Step 3: Systematic Calculation & Simplification' : 'படி 3: படிப் படியாக சுருக்குதல்',
+                work: 'Calculate arithmetic and algebraic operations step-by-step.',
+                marking_tip: isEnglishQuestion ? '1 Mark: Maintaining clear calculation steps.' : '1 மதிப்பெண்: ஒவ்வொரு வரியையும் தெளிவாக சுருக்குங்கள்.'
               },
               {
                 step_number: 4,
-                title: effectiveLang === 'ta' ? 'படி 4: இறுதி விடை காணுதல்' : 'Step 4: Final Solution with Units',
-                work: 'Arrive at the verified final numerical answer.',
-                marking_tip: '1 Mark: Draw a rectangular box around the final answer with units.'
+                title: isEnglishQuestion ? 'Step 4: Arrive at Final Verified Answer' : 'படி 4: இறுதி விடை காணுதல்',
+                work: 'Computed Result (Boxed with units)',
+                marking_tip: isEnglishQuestion ? '1 Mark: Rectangular box around the final answer.' : '1 மதிப்பெண்: இறுதி விடையை கட்டமிட்டு காட்டவும்.'
               }
             ],
             final_answer: 'Final Computed Result (Boxed)',
-            exam_presentation_tip: 'Write each step clearly, maintain neat alignment of equality signs (=), and box your final answer.'
+            exam_presentation_tip: isEnglishQuestion ? 'Maintain clear vertical alignment of equals signs (=) and draw a box around your final answer.' : 'சமம் குறிகளை நேராக வைத்து, இறுதி விடையை கட்டமிடுங்கள்.'
           },
-          ready_prompt: targetLang.readyPrompt,
-          teacher_dialogue: targetLang.greeting + ' ' + targetLang.readyPrompt,
-          spoken_audio_script: targetLang.greeting + ' ' + targetLang.readyPrompt
+          ready_prompt: 'கரும்பலகையில் கேள்வியையும் சூத்திரத்தையும் எழுதியாச்சு! நாம் பாடத்தை தொடங்கலாமா?',
+          teacher_dialogue: 'வணக்கம்! கரும்பலகையில தீர்வு எழுதியிருக்கேன். ஒவ்வொரு படியையும் பொறுமையாக கவனியுங்கள். தேர்வில் முழு மதிப்பெண் பெற ஸ்டெப்ஸ் ரொம்ப முக்கியம். ஆரம்பிக்கலாமா?',
+          spoken_audio_script: 'வணக்கம்! கரும்பலகையில தீர்வு எழுதியிருக்கேன். தேர்வில் முழு மதிப்பெண் பெற ஸ்டெப்ஸ் ரொம்ப முக்கியம். ஆரம்பிக்கலாமா?'
         };
       }
     }
