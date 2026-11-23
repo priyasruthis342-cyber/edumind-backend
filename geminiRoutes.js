@@ -201,21 +201,50 @@ router.post('/exam-qa', async (req, res) => {
       });
     }
 
-    const isTamil = language === 'ta';
+    // Detect scanned text language or respect user-chosen language
+    const hasTamil = /[\u0B80-\u0BFF]/.test(prompt);
+    const hasHindi = /[\u0900-\u097F]/.test(prompt);
+    const hasTelugu = /[\u0C00-\u0C7F]/.test(prompt);
+    const hasMalayalam = /[\u0D00-\u0D7F]/.test(prompt);
+    const hasKannada = /[\u0C80-\u0CFF]/.test(prompt);
 
-    const langVoiceGuideline = isTamil
-      ? `LANGUAGE REQUIREMENT: ENGLISH TECHNICAL CORE WITH BRIEF TAMIL NOTES
-- All core technical answers, definitions, architecture descriptions, Big-O notations, and programming code MUST BE WRITTEN IN CLEAR UNIVERSITY-STANDARD ENGLISH.
-- Underneath each definition or question, you may provide a brief 1-2 sentence Tamil explanation note (எளிய தமிழ் விளக்கம்) for student understanding, but the primary exam content and code must remain strictly in English.`
-      : `LANGUAGE REQUIREMENT: ENGLISH
-- Professional, clear, academic Indian University standard (Anna University / VTU / JNTU pattern).
-- Crisp definitions, robust technical terminology, clear derivations, and structured bulleted explanations.`;
+    let effectiveLang = language || 'en';
+    if (hasTamil && effectiveLang === 'en') effectiveLang = 'ta';
+    if (hasHindi && effectiveLang === 'en') effectiveLang = 'hi';
+    if (hasTelugu && effectiveLang === 'en') effectiveLang = 'te';
+    if (hasMalayalam && effectiveLang === 'en') effectiveLang = 'ml';
+    if (hasKannada && effectiveLang === 'en') effectiveLang = 'kn';
 
-    const systemInstruction = `You are EduMind Gemini AI, a distinguished Anna University senior professor, chief examiner, and textbook author.
-Analyze the provided study material / syllabus / theory PDF text thoroughly.
-Generate an exhaustive exam question bank with detailed, high-scoring answers formatted exactly to university paper presentation standards.
+    const langNameMap = {
+      ta: 'Tamil (தமிழ்) - அனைத்து தலைப்புகள், சுருக்கம், கேள்விகள் (2, 3, 8, 12 மதிப்பெண்), விளக்கங்கள் மற்றும் பதில்கள் அனைத்தும் முழுமையாக எளிய, இயல்பான தமிழ் மொழியில் (Tamil) எழுதப்பட வேண்டும்.',
+      hi: 'Hindi (हिन्दी) - सभी शीर्षक, सारांश, प्रश्न (2, 3, 8, 12 अंक), परिभाषाएँ, व्याख्याएँ और उत्तर पूरी तरह से सरल और स्पष्ट हिन्दी (Hindi) में होने चाहिए।',
+      te: 'Telugu (తెలుగు) - అన్ని శీర్షికలు, సారాంశం, ప్రశ్నలు (2, 3, 8, 12 మార్కులు), వివరణలు మరియు సమాధానాలు పూర్తిగా సహజమైన తెలుగు (Telugu) భాషలో ఉండాలి.',
+      ml: 'Malayalam (മലയാളം) - എല്ലാ ചോദ്യങ്ങളും (2, 3, 8, 12 മാർക്കുകൾ), തലക്കെട്ടുകളും, ഉത്തരങ്ങളും പൂർണ്ണമായും മലയാളത്തിൽ (Malayalam) ആയിരിക്കണം.',
+      kn: 'Kannada (ಕನ್ನಡ) - ಎಲ್ಲಾ ಪ್ರಶ್ನೆಗಳು (2, 3, 8, 12 ಅಂಕಗಳು), ಶೀರ್ಷಿಕೆಗಳು, ವ್ಯಾಖ್ಯಾನಗಳು ಮತ್ತು ಉತ್ತರಗಳು ಸಂಪೂರ್ಣವಾಗಿ ಕನ್ನಡದಲ್ಲಿ (Kannada) ಇರಬೇಕು.',
+      en: 'English - Professional, clear, academic Indian university examination standard.'
+    };
+    const targetLangDesc = langNameMap[effectiveLang] || langNameMap.en;
 
-${langVoiceGuideline}
+    // Detect if the scanned document is genuinely about programming/coding vs general theory
+    const isCodingSubject = /programming|c\+\+|java\b|python|javascript|typescript|compiler|html|css|sql\b|function\s*\(|class\s+\w+|def\s+\w+|int\s+main|source\s+code|syntax/i.test(prompt);
+
+    const systemInstruction = `You are EduMind Gemini AI, an elite university professor, chief academic examiner, and textbook author.
+Analyze the provided study material / syllabus / theory text thoroughly.
+Generate an exhaustive exam question bank with detailed, high-scoring answers formatted to academic university standards.
+
+CRITICAL DIRECTIVE 1: STRICT LANGUAGE COMPLIANCE (HIGHEST PRIORITY):
+- TARGET LANGUAGE: ${targetLangDesc}
+- You must generate ALL output—the chapter_title, summary, all 2-mark, 3-mark, 8-mark, and 12-mark questions, definitions, detailed explanations, bullet points, and conclusions—STRICTLY AND ENTIRELY IN THE TARGET LANGUAGE (${effectiveLang.toUpperCase()}).
+- DO NOT default to English when the user selected or scanned content in Tamil, Hindi, Telugu, Malayalam, or Kannada!
+
+CRITICAL DIRECTIVE 2: DYNAMIC SUBJECT RELEVANCE & ZERO UNWANTED CODING:
+- Analyze what subject the user actually scanned (e.g. Physics, Chemistry, Biology, Mathematics, History, Management, Business Systems, Law, Economics, Mechanical, Civil, Computer Science, etc.).
+- IF the scanned material is a THEORY subject (NOT computer programming):
+  * ABSOLUTELY NEVER generate computer programming code (no C++, Java, or Python code, and NO terminal execution output)!
+  * For 8-mark and 12-mark questions:
+    - Provide deep, structured theoretical explanations, working principles, relevant laws, equations/formulas, architectural/flow diagrams (in text or ASCII), real-world practical examples, and clear advantages/disadvantages.
+    - Leave "program_code": "" and "program_output": "" as empty strings so the UI does NOT display an irrelevant code block!
+- ONLY include programming code ("program_code" and "program_output") if the scanned document is GENUINELY about software programming or computer code!
 
 STRICT ANNA UNIVERSITY EXAM PATTERN & ANSWER PRESENTATION GUIDELINES:
 1. 2-MARK QUESTIONS (Part A standard - 5 Questions):
@@ -1340,40 +1369,65 @@ router.post('/story-convert', async (req, res) => {
     }
 
     const cleanedText = cleanOcrArtifacts(text.trim());
-    const isTamil = language === 'ta';
-    const langInstruction = isTamil
-      ? `TAMIL VOICE & DIALOGUE STYLE:
-- Use natural, friendly, conversational modern Tamil (இயல்பான பேச்சுத் தமிழ்) like an enthusiastic university professor delivering an inspiring lecture over tea.
-- Do NOT use archaic, stiff, formal book Tamil.
-- Write with clear, expressive, rhythmic sentences that Text-To-Speech (TTS) voices can read with natural warmth, vocal inflections, and emotion without stumbling.`
-      : `ENGLISH VOICE & DIALOGUE STYLE:
-- Use an engaging, conversational, friendly professor tone with clear, expressive phrasing optimized for natural audio reading.`;
 
-    const systemInstruction = `You are EduMind Distinguished Professor & Academic Storyteller.
-Your mission: Acting as an expert professor, analyze the user's uploaded syllabus topic deeply from A to Z, explaining core principles, behavior, and working mechanisms thoroughly in an engaging narrative style while staying 100% true to the actual content.
+    const hasTamil = /[\u0B80-\u0BFF]/.test(cleanedText);
+    const hasHindi = /[\u0900-\u097F]/.test(cleanedText);
+    const hasTelugu = /[\u0C00-\u0C7F]/.test(cleanedText);
+    const hasMalayalam = /[\u0D00-\u0D7F]/.test(cleanedText);
+    const hasKannada = /[\u0C80-\u0CFF]/.test(cleanedText);
 
-STRICT CONSTRAINTS & REQUIREMENTS:
-1. NO BRIEF 2-LINE SUMMARIES OR SHORT OVERVIEWS:
-   - Do NOT provide a brief overview or short 2-line summary.
-   - Deliver a rich, comprehensive, deep-dive academic lecture (approx 500-900 words / 3000-5000 characters) that analyzes the syllabus deeply from A to Z.
-2. ZERO UNPROMPTED FICTIONAL METAPHORS:
-   - Do NOT invent fictional stories, unrelated metaphors, trains, bogies, cars, animals, chefs, robots, or fairy tales.
-   - Do NOT say "Imagine a train running on a single track" or "Imagine a chef in a kitchen". Stay 100% faithful to the real technical/academic concepts.
-3. PROFESSOR-GRADE DEEP ANALYSIS FROM A TO Z:
-   - Part A: Academic Introduction — Big-picture context, core definition, and why this topic is fundamental.
-   - Part B: Principle & Architecture Breakdown — Step-by-step examination of every topic, primitive structure, array dimension, or data organization mentioned in the text.
-   - Part C: Working Mechanisms & Internal Behaviors — Explain how operations, pointers, memory addresses, insertions, deletions, and traversals execute under the hood.
-   - Part D: Types & Variations — Deeply contrast each type (e.g. Singly, Doubly, and Circular Linked Lists) explaining pointer configurations and edge cases.
-   - Part E: Real-world Engineering Applications — Where and why operating systems, cloud services, and real-world software rely on these mechanisms.
-4. ENGAGING NARRATIVE SPOKEN STYLE:
-   - ${langInstruction}
+    let effectiveLang = language || 'ta';
+    if (hasTamil) effectiveLang = 'ta';
+    else if (hasHindi) effectiveLang = 'hi';
+    else if (hasTelugu) effectiveLang = 'te';
+    else if (hasMalayalam) effectiveLang = 'ml';
+    else if (hasKannada) effectiveLang = 'kn';
+
+    const langStyleMap = {
+      ta: `TAMIL VOICE & DIALOGUE STYLE (SUPREME PRIORITY):
+- Use 100% simple, natural, everyday conversational spoken Tamil (இயல்பான எளிய அன்றாடப் பேச்சுத் தமிழ்).
+- STRICTLY FORBIDDEN: Do NOT use archaic, stiff, bookish, or heavy literary words (e.g. absolutely avoid "இயற்பியல்", "பழங்கால நடை", "கடின இலக்கியச் சொற்கள்").
+- Write friendly, warm sentences like a caring elder sister or friendly teacher explaining easily to school students so they understand and remember effortlessly.`,
+      hi: `HINDI VOICE & DIALOGUE STYLE:
+- Use 100% natural, everyday spoken conversational Hindi (सरल बोलचाल की हिन्दी).
+- Avoid overly heavy, formal, or Sanskritized bookish vocabulary. Keep it warm, friendly, and easy to follow.`,
+      te: `TELUGU VOICE & DIALOGUE STYLE:
+- Use clear, natural, everyday conversational Telugu (సరళమైన నిత్య సంభాషణ తెలుగు).
+- Friendly, warm tutor tone that students easily grasp.`,
+      ml: `MALAYALAM VOICE & DIALOGUE STYLE:
+- Use simple, natural everyday spoken Malayalam (ലളിതമായ ദൈനംദിന സംസാര ഭാഷ).
+- Engaging and clear tutor cadence.`,
+      kn: `KANNADA VOICE & DIALOGUE STYLE:
+- Use simple, clear, everyday spoken Kannada (ಸರಳ ನಿತ್ಯ ಸಂಭಾಷಣಾ ಕನ್ನಡ).
+- Friendly and student-centric tone.`,
+      en: `ENGLISH VOICE & DIALOGUE STYLE:
+- Warm, engaging, conversational tutor tone using simple, everyday words that make learning enjoyable and crystal clear.`
+    };
+
+    const chosenLangStyle = langStyleMap[effectiveLang] || langStyleMap.en;
+
+    const systemInstruction = `You are EDU Mind AI's Friendly Academic Storyteller & Voice Tutor.
+Your mission: Analyze the user's uploaded syllabus or theory text and turn it into a clear, engaging, easy-to-understand spoken audio lesson.
+
+CRITICAL TONE & ACCESSIBILITY REQUIREMENTS:
+1. NATURAL EVERYDAY SPOKEN LANGUAGE:
+   - ${chosenLangStyle}
+   - NEVER use archaic, bookish, or tongue-twister words that confuse students or sound robotic in TTS.
+2. STRICT SUBJECT ALIGNMENT (NO FORCED CODING OR RIGID METAPHORS):
+   - Explain the EXACT academic topic scanned (Physics, Chemistry, History, Biology, Management, Economics, Computer Science, etc.).
+   - If the material is a general theory topic, explain its core ideas, real-world examples, and key concepts naturally. NEVER mention coding, programming, pointers, or software unless the topic is actually computer science!
+3. STRUCTURE:
+   - Part 1: Friendly Greeting & Warm Intro: Hook the student with what this lesson is about and why it matters in daily life.
+   - Part 2: Step-by-Step Clear Explanation: Break down the core concepts into simple, intuitive chunks.
+   - Part 3: Real-World Example & Exam High-Score Tip: Share an easy everyday example and tips to write well in exams.
+   - Part 4: Cheerful Conclusion: Encouraging words for the student's study quest.
 
 Return ONLY a valid JSON object matching:
 {
   "title": "Exact Chapter / Subject Title",
-  "simple_explanation": "Thorough, structured academic breakdown of all syllabus concepts from A to Z...",
-  "story": "Comprehensive deep-dive spoken masterclass lecture from A to Z covering core principles, inner working mechanisms, and variations in a warm, narrative conversational cadence with zero fictional metaphors...",
-  "audio_script": "Complete spoken lecture audio script for text-to-speech voice synthesis..."
+  "simple_explanation": "Simple, clear breakdown of all syllabus concepts in natural everyday language...",
+  "story": "Warm, engaging, conversational spoken audio lesson written in natural daily spoken language...",
+  "audio_script": "Clean text-to-speech script optimized for natural audio reading..."
 }`;
 
     const rawText = await generateWithGemini(
@@ -1500,18 +1554,32 @@ async function synthesizeNeuralSpeech({ text, language = 'ta', mode = 'story' })
     throw new Error('msedge-tts library is not loaded on server.');
   }
 
-  const voice = isTamil ? 'ta-IN-PallaviNeural' : 'en-US-JennyNeural';
+  const voiceMap = {
+    ta: 'ta-IN-PallaviNeural',
+    te: 'te-IN-ShrutiNeural',
+    hi: 'hi-IN-SwaraNeural',
+    ml: 'ml-IN-SobhanaNeural',
+    kn: 'kn-IN-SapnaNeural',
+    en: 'en-US-JennyNeural'
+  };
+  const voice = voiceMap[language] || (isTamil ? 'ta-IN-PallaviNeural' : 'en-US-JennyNeural');
   
   // Natural human tutor and storyteller acoustic parameters
-  let rate = '-6%';
+  let rate = '-4%';
   let pitch = '+3Hz';
-  if (isTamil) {
-    // Tamil: Warm, engaging storytelling cadence
-    rate = mode === 'story' ? '-8%' : '-5%';
-    pitch = mode === 'story' ? '+2Hz' : '+1Hz';
+  if (language === 'ta') {
+    // Tamil: Warm, engaging storytelling cadence in daily spoken tone
+    rate = mode === 'story' ? '-6%' : '-4%';
+    pitch = mode === 'story' ? '+3Hz' : '+2Hz';
+  } else if (language === 'hi') {
+    rate = '-4%';
+    pitch = '+2Hz';
+  } else if (language === 'te' || language === 'ml' || language === 'kn') {
+    rate = '-5%';
+    pitch = '+2Hz';
   } else {
     // English: Soft, sweet, and expressive tutor cadence
-    rate = mode === 'story' ? '-6%' : '-4%';
+    rate = mode === 'story' ? '-5%' : '-3%';
     pitch = mode === 'story' ? '+3Hz' : '+2Hz';
   }
 
@@ -1679,6 +1747,226 @@ TRANSCRIPTION INSTRUCTIONS:
     });
   } catch (err) {
     console.error('Gemini image extraction error:', err.message);
+    return res.status(500).json({
+      success: false,
+      message: err.message
+    });
+  }
+});
+
+/**
+ * POST /api/gemini/math-teacher-lesson
+ * Dedicated AI Math Teacher Girl Classroom Engine.
+ * Analyzes uploaded math problems/syllabus, writes on the blackboard:
+ * - User's question
+ * - Step-by-step math solution
+ * - Relevant formulas
+ * - Marking/step-wise presentation tips
+ * Then prepares a friendly, conversational spoken lesson with a pause asking "Shall we start?".
+ */
+router.post('/math-teacher-lesson', async (req, res) => {
+  try {
+    const { mathQuestion, language = 'ta', imageBase64, mimeType = 'image/jpeg' } = req.body || {};
+
+    let userText = (mathQuestion && typeof mathQuestion === 'string') ? mathQuestion.trim() : '';
+
+    // If an image is provided, run vision OCR first if text is empty
+    if (!userText && imageBase64) {
+      const cleanBase64 = imageBase64.replace(/^data:[^;]+;base64,/, '');
+      const client = getGeminiClient();
+      if (client) {
+        for (const model of CANDIDATE_MODELS) {
+          try {
+            const resp = await withTimeout(
+              client.models.generateContent({
+                model,
+                contents: [
+                  {
+                    role: 'user',
+                    parts: [
+                      { inlineData: { mimeType, data: cleanBase64 } },
+                      { text: 'Transcribe the mathematics question, formula, equation, or syllabus in this image cleanly. Do not solve yet, just extract the exact text and numbers.' }
+                    ]
+                  }
+                ],
+                config: { temperature: 0.1 }
+              }),
+              12000,
+              `Vision Math OCR (${model})`
+            );
+            if (resp && resp.text) {
+              userText = cleanMathFormatting(resp.text.trim());
+              break;
+            }
+          } catch (e) {
+            console.warn('Math vision OCR try note:', e.message);
+          }
+        }
+      }
+    }
+
+    if (!userText) {
+      userText = 'Solve: 2x² + 5x - 3 = 0';
+    }
+
+    const hasTamil = /[\u0B80-\u0BFF]/.test(userText);
+    const hasHindi = /[\u0900-\u097F]/.test(userText);
+    const hasTelugu = /[\u0C00-\u0C7F]/.test(userText);
+    const hasMalayalam = /[\u0D00-\u0D7F]/.test(userText);
+    const hasKannada = /[\u0C80-\u0CFF]/.test(userText);
+
+    let effectiveLang = language || 'ta';
+    if (hasTamil) effectiveLang = 'ta';
+    else if (hasHindi) effectiveLang = 'hi';
+    else if (hasTelugu) effectiveLang = 'te';
+    else if (hasMalayalam) effectiveLang = 'ml';
+    else if (hasKannada) effectiveLang = 'kn';
+
+    const langDirectives = {
+      ta: {
+        langName: 'Tamil (தமிழ்)',
+        greeting: 'வணக்கம்! நான் உங்கள் கணித ஆசிரியை. வாருங்கள், இந்த கணக்கை மிக எளிமையாக ஒன்றாக படிப்போம்!',
+        readyPrompt: 'கரும்பலகையில் கேள்வியையும் சூத்திரத்தையும் எழுதியாச்சு! நாம் பாடத்தை தொடங்கலாமா?',
+        instruction: 'Use 100% natural, everyday spoken Tamil (இயல்பான எளிய அன்றாடப் பேச்சுத் தமிழ்). Absolutely NO heavy archaic bookish words. Speak like a sweet, enthusiastic school teacher explaining to children with love and warmth.'
+      },
+      hi: {
+        langName: 'Hindi (हिन्दी)',
+        greeting: 'नमस्ते! मैं आपकी गणित अध्यापिका हूँ। आइए, इस गणित के सवाल को बहुत ही आसान तरीके से सीखते हैं!',
+        readyPrompt: 'मैंने ब्लैकबोर्ड पर प्रश्न और सूत्र लिख दिए हैं! क्या हम शुरू करें?',
+        instruction: 'Use natural, everyday spoken conversational Hindi. Warm, friendly and easy to understand.'
+      },
+      te: {
+        langName: 'Telugu (తెలుగు)',
+        greeting: 'నమస్కారం! నేను మీ గణిత ఉపాధ్యాయురాలిని. రండి, ఈ గణిత సమస్యను చాలా సులభంగా నేర్చుకుందాం!',
+        readyPrompt: 'నేను బోర్డుపై ప్రశ్న మరియు సూత్రాలను రాశాను! మనం ప్రారంభించవచ్చా?',
+        instruction: 'Use natural, everyday conversational Telugu.'
+      },
+      ml: {
+        langName: 'Malayalam (മലയാളം)',
+        greeting: 'നമസ്കാരം! ഞാൻ നിങ്ങളുടെ ഗണിത അധ്യാപികയാണ്. നമുക്ക് ഈ കണക്ക് വളരെ എളുപ്പത്തിൽ പഠിക്കാം!',
+        readyPrompt: 'ഞാൻ ബോർഡിൽ ചോദ്യവും സൂത്രവാക്യങ്ങളും എഴുതിയിട്ടുണ്ട്! നമുക്ക് തുടങ്ങാമോ?',
+        instruction: 'Use natural, everyday spoken Malayalam.'
+      },
+      kn: {
+        langName: 'Kannada (ಕನ್ನಡ)',
+        greeting: 'ನಮಸ್ಕಾರ! ನಾನು ನಿಮ್ಮ ಗಣಿತ ಶಿಕ್ಷಕಿ. ಬನ್ನಿ, ಈ ಲೆಕ್ಕವನ್ನು ಸುಲಭವಾಗಿ ಕಲಿಯೋಣ!',
+        readyPrompt: 'ನಾನು ಬೋರ್ಡ್ ಮೇಲೆ ಪ್ರಶ್ನೆ ಮತ್ತು ಸೂತ್ರಗಳನ್ನು ಬರೆದಿದ್ದೇನೆ! ನಾವು ಶುರು ಮಾಡೋಣವೇ?',
+        instruction: 'Use natural, everyday conversational Kannada.'
+      },
+      en: {
+        langName: 'English',
+        greeting: 'Hello! I am your Math Teacher. Let us break down and solve this math problem step-by-step!',
+        readyPrompt: 'I have written the question, formula, and steps on the chalkboard! Shall we start?',
+        instruction: 'Use warm, friendly, encouraging conversational English suitable for students.'
+      }
+    };
+
+    const targetLang = langDirectives[effectiveLang] || langDirectives.en;
+
+    const systemInstruction = `You are the AI Math Teacher Girl inside EDU Mind AI.
+You are a friendly, sweet, cute, and highly encouraging mathematics teacher standing in front of a classroom chalkboard.
+
+MISSION:
+The student has provided a math question, equation, problem, or math syllabus topic:
+"${userText}"
+
+You must:
+1. TARGET LANGUAGE: Write EVERYTHING strictly in ${targetLang.langName}.
+2. Tone: ${targetLang.instruction}
+3. Blackboard Board Content:
+   - "question": Clean, formatted mathematical statement of the problem (in clean Unicode, NO raw LaTeX dollar signs or backslash syntax).
+   - "core_formula": The exact formula or theorem to solve this problem (clean Unicode, e.g. x = (-b ± √(b² - 4ac)) / (2a)).
+   - "given_data": Extracted parameters/given values.
+   - "steps": Array of 3 to 6 steps. Each step must have:
+     * "step_number": integer
+     * "title": Short title (e.g. "Step 1: Identifying given values")
+     * "work": Clear calculation line (Unicode math)
+     * "marking_tip": Crucial exam presentation advice explaining how this specific step earns marks in school/university exams (e.g., "1 Mark awarded for correct formula substitution").
+   - "final_answer": Prominent final answer with units if applicable.
+   - "exam_presentation_tip": Key tip for scoring 100% marks in exams on this type of question.
+4. "ready_prompt": The question asking if the student is ready to start (e.g. "${targetLang.readyPrompt}").
+5. "teacher_dialogue": The teacher's warm spoken walkthrough explaining the problem and teaching the lesson in simple conversational language.
+6. "spoken_audio_script": Clean plain text script for text-to-speech audio narration.
+
+Return ONLY a valid JSON object matching:
+{
+  "greeting": "${targetLang.greeting}",
+  "detected_topic": "Topic Name in ${targetLang.langName}",
+  "board_content": {
+    "question": "...",
+    "core_formula": "...",
+    "given_data": "...",
+    "steps": [
+      {
+        "step_number": 1,
+        "title": "...",
+        "work": "...",
+        "marking_tip": "..."
+      }
+    ],
+    "final_answer": "...",
+    "exam_presentation_tip": "..."
+  },
+  "ready_prompt": "${targetLang.readyPrompt}",
+  "teacher_dialogue": "...",
+  "spoken_audio_script": "..."
+}`;
+
+    const rawText = await generateWithGemini(
+      `STUDENT'S MATH INPUT:\n\n${userText}`,
+      systemInstruction
+    );
+
+    let parsed;
+    try {
+      parsed = safeParseJson(rawText);
+    } catch {
+      // Deterministic math fallback
+      parsed = {
+        greeting: targetLang.greeting,
+        detected_topic: 'Mathematical Problem Solving',
+        board_content: {
+          question: userText,
+          core_formula: 'Standard Mathematical Formulation',
+          given_data: 'Given from user input',
+          steps: [
+            {
+              step_number: 1,
+              title: 'Step 1: Analyze Given Parameters',
+              work: userText,
+              marking_tip: '1 Mark: Clearly write down the given data in your answer sheet.'
+            },
+            {
+              step_number: 2,
+              title: 'Step 2: Apply the Standard Formula',
+              work: 'Substitute numerical values into the principle equation.',
+              marking_tip: '2 Marks: Showing proper substitution earns direct step marks.'
+            },
+            {
+              step_number: 3,
+              title: 'Step 3: Simplify and Arrive at Solution',
+              work: 'Calculate step-by-step without skipping intermediate lines.',
+              marking_tip: '1 Mark: Box the final answer prominently.'
+            }
+          ],
+          final_answer: 'Completed Step-by-Step Solution',
+          exam_presentation_tip: 'Write each calculation on a new line and draw a box around the final result.'
+        },
+        ready_prompt: targetLang.readyPrompt,
+        teacher_dialogue: targetLang.greeting + ' ' + targetLang.readyPrompt,
+        spoken_audio_script: targetLang.greeting + ' ' + targetLang.readyPrompt
+      };
+    }
+
+    return res.status(200).json(sanitizeObjectMath({
+      success: true,
+      provider: 'math-teacher-engine',
+      language: effectiveLang,
+      ...parsed
+    }));
+
+  } catch (err) {
+    console.error('Math teacher lesson error:', err);
     return res.status(500).json({
       success: false,
       message: err.message
