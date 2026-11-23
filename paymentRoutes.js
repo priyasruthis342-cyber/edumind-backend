@@ -46,7 +46,7 @@ router.get('/config', (req, res) => {
 
 /**
  * POST /api/payment/create-order
- * Creates an official Live Razorpay order for ₹1.00 (100 paise)
+ * Creates an official Live Razorpay order for ₹1.00 ( 100 paise)
  */
 router.post('/create-order', async (req, res) => {
   try {
