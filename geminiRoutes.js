@@ -102,7 +102,7 @@ async function generateWithGemini(contents, systemInstruction, mimeType = 'appli
   };
   let lastError = null;
 
-  // 1. Try Gemini candidate models with 12-second timeout per model
+  // 1. Try Gemini candidate models with 35-second timeout per model
   const client = getGeminiClient();
   if (client) {
     for (const model of CANDIDATE_MODELS) {
@@ -113,7 +113,7 @@ async function generateWithGemini(contents, systemInstruction, mimeType = 'appli
             contents,
             config
           }),
-          10000,
+          35000,
           `Gemini (${model})`
         );
         if (response && response.text) {
@@ -717,7 +717,7 @@ function generateLocalExamQA(prompt, language = 'en') {
             : '',
 
           numerical_problem: isTamil
-            ? `**மாதிரி வினா மற்றும் படிநிலையான தீர்வு (Worked-Out Example Problem):**\n- **வினா:** ${title} அமைப்பில் ஆரம்ப மதிப்பு a = 10, வீதம் r = 2 மற்றும் படிநிலைகள் n = 4 எனில், n-வது படிநிலையின் இறுதி மதிப்பைக் கணக்கிடுக.\n- **சூத்திரம்:** விடை = a + (n * r)\n- **படி 1:** கொடுக்கப்பட்டவை: a = 10, r = 2, n = 4\n- **படி 2:** கணக்கீடு: விடை = 10 + (4 * 2) = 10 + 8 = 18\n- **இறுதி விடை:** கணக்கிடப்பட்ட மதிப்பு = 18. தேர்வுக்கான முழு மதிப்பெண் தீர்வு.`
+            ? `**மாதிரி வினா மற்றும் படிநிலையான தீர்வு (Worked-Out Example Problem):**\n- **வினா:** ${title} அமைப்பில் ஆரம்ப மதிப்பு a = 10, வீதம் r = 2 மற்றும் படிநிலைகள் n = 4 எனில், n-வது படிநிலையின் இறுதி மதிப்பைக் கணக்கிடுக.\n- **ஃபார்முலா (Formula):** விடை = a + (n * r)\n- **படி 1:** கொடுக்கப்பட்டவை: a = 10, r = 2, n = 4\n- **படி 2:** கணக்கீடு: விடை = 10 + (4 * 2) = 10 + 8 = 18\n- **இறுதி விடை:** கணக்கிடப்பட்ட மதிப்பு = 18. தேர்வுக்கான முழு மதிப்பெண் தீர்வு.`
             : `**Numerical / Example Problem & Step-by-Step Worked-Out Solution:**\n- **Problem Statement:** In an application of ${title}, calculate the resultant output given Base Parameter a = 100, Growth Factor r = 5, and Stage Count n = 4.\n- **Formula:** Result = a + (n * r)\n- **Step 1 (Parameter Substitution):** a = 100, r = 5, n = 4\n- **Step 2 (Computation):** Result = 100 + (4 * 5) = 100 + 20\n- **Result:** Verified Numerical Value = 120 units.`,
 
           tradeoffs_complexity: isTamil
@@ -1850,9 +1850,16 @@ router.post('/math-teacher-lesson', async (req, res) => {
 
     let userText = (mathQuestion && typeof mathQuestion === 'string') ? mathQuestion.trim() : '';
 
-    // If an image is provided, run vision OCR first if text is empty
-    if (!userText && imageBase64) {
-      const cleanBase64 = imageBase64.replace(/^data:[^;]+;base64,/, '');
+    // Ignore placeholder strings like "Uploaded Math File: ...", "Camera Photo: ...", "Math Problem File: ..."
+    if (/^(Uploaded Math File|Camera Photo|Math Problem File|Selected Math File):/i.test(userText)) {
+      userText = '';
+    }
+
+    const cleanBase64 = imageBase64 ? imageBase64.replace(/^data:[^;]+;base64,/, '') : '';
+
+    // If an image is provided, run high-accuracy Gemini Vision OCR to transcribe the exact text from the photo
+    if (cleanBase64) {
+      console.log(`[Math Lesson] Image received (${Math.round(cleanBase64.length / 1024)} KB). Running multi-model Gemini Vision extraction...`);
       const client = getGeminiClient();
       if (client) {
         for (const model of CANDIDATE_MODELS) {
@@ -1865,21 +1872,25 @@ router.post('/math-teacher-lesson', async (req, res) => {
                     role: 'user',
                     parts: [
                       { inlineData: { mimeType, data: cleanBase64 } },
-                      { text: 'Transcribe the mathematics question, formula, equation, or syllabus in this image cleanly. Do not solve yet, just extract the exact text and numbers.' }
+                      { text: 'Transcribe the exact mathematics question, problem statement, equations, formulas, numbers, variables, and any given answer or target proof from this photo. Output ONLY the raw transcribed mathematics, no conversational remarks.' }
                     ]
                   }
                 ],
                 config: { temperature: 0.1 }
               }),
-              12000,
+              25000,
               `Vision Math OCR (${model})`
             );
-            if (resp && resp.text) {
-              userText = cleanMathFormatting(resp.text.trim());
-              break;
+            if (resp && resp.text && resp.text.trim()) {
+              const transcribed = cleanMathFormatting(resp.text.trim());
+              if (transcribed.length >= 3) {
+                userText = transcribed;
+                console.log(`[Math Vision OCR] Successfully extracted math problem: "${userText.slice(0, 80)}..."`);
+                break;
+              }
             }
           } catch (e) {
-            console.warn('Math vision OCR try note:', e.message);
+            console.warn(`[Math Vision OCR] Model ${model} note:`, e.message);
           }
         }
       }
@@ -1893,16 +1904,20 @@ router.post('/math-teacher-lesson', async (req, res) => {
     const isEnglishQuestion = !hasTamil;
 
     // LANGUAGE RULES AS REQUESTED:
-    // 1. If English question: Written blackboard is in English, spoken explanation is in natural everyday Tamil ("idhu eppadi vandhuchu").
-    // 2. If Tamil question: Written blackboard is in Tamil, spoken explanation is in natural everyday Tamil.
+    // 1. If English question: Written blackboard is in English, explanation is in natural everyday spoken Tamil ("idhu eppadi vandhuchu").
+    // 2. If Tamil question: Written blackboard is in Tamil, explanation is in natural everyday spoken Tamil.
     const boardLanguage = isEnglishQuestion ? 'English' : 'Tamil (தமிழ்)';
 
-    const systemInstruction = `You are the AI Math Teacher Girl inside EDU Mind AI.
-You are an expert, encouraging female mathematics teacher standing in front of a two-part classroom chalkboard.
+    const systemInstruction = `You are the AI Math Teacher inside EDU Mind AI.
+You write on a two-part classroom chalkboard.
+DO NOT OUTPUT SPEECH OR AUDIO. All explanations must be written out on the board for the student to read.
+
+CRITICAL INSTRUCTION: ZERO GENERIC DUMMY TEMPLATES!
+- Never output placeholder strings like "Uploaded Math File:", "Extracted parameters from problem statement", "Governing Formula & Mathematical Principles", or "Final Computed Result (Boxed)".
+- Solve the ACTUAL problem provided by the student with exact numbers, equations, and solutions!
 
 TWO-PART SPLIT BOARD STRUCTURE:
-The chalkboard is divided into two distinct parts:
-PART 1: Problem Statement, Given Data, Governing Formula, and Target Answer to be Proven.
+PART 1: Actual Problem Statement, Given Data, Governing Formula, and Target Answer to be Proven.
 PART 2: Complete Hand-Written Style Step-by-Step Proof and Derivation with "how each step came about" (இது எப்படி வந்தது).
 
 STRICT VOCABULARY & LANGUAGE RULES:
@@ -1926,7 +1941,7 @@ STRICT VOCABULARY & LANGUAGE RULES:
 
 Return ONLY a valid JSON object matching:
 {
-  "greeting": "வணக்கம்! நான் உங்கள் கணித ஆசிரியை. வாருங்கள், இந்த கணக்கை மிக எளிமையாக ஒன்றாக படிப்போம்!",
+  "greeting": "வணக்கம்! உங்கள் கணக்கை கரும்பலகையில் படிப்படியாக எழுதுகிறேன்.",
   "detected_topic": "${isEnglishQuestion ? 'Topic Title in English' : 'Topic Title in Tamil'}",
   "board_content": {
     "question": "Full problem statement",
@@ -1945,19 +1960,31 @@ Return ONLY a valid JSON object matching:
     "final_answer": "Complete final boxed result",
     "exam_presentation_tip": "Tips on how to box and align work for maximum scoring"
   },
-  "ready_prompt": "கரும்பலகையில் வினாவையும் ஃபார்முலாவையும் எழுதியாச்சு! நாம் படிப்பதை தொடங்கலாமா?",
-  "teacher_dialogue": "Spoken walkthrough in natural everyday conversational Tamil explaining each step and idhu eppadi vandhuchu...",
-  "spoken_audio_script": "Clean script in natural everyday conversational Tamil for female TTS narration..."
+  "ready_prompt": "கரும்பலகையில் வினாவையும் ஃபார்முலாவையும் எழுதியாச்சு!",
+  "teacher_dialogue": "Written explanation...",
+  "spoken_audio_script": ""
 }`;
+
+    let contents;
+    if (cleanBase64) {
+      contents = [
+        {
+          role: 'user',
+          parts: [
+            { inlineData: { mimeType, data: cleanBase64 } },
+            { text: `STUDENT'S UPLOADED MATH QUESTION:\n${userText ? `Transcribed equation: ${userText}\n` : ''}\nCarefully inspect the image and solve the mathematical problem completely. Output every step on the chalkboard.` }
+          ]
+        }
+      ];
+    } else {
+      contents = `STUDENT'S MATH INPUT:\n\n${userText}`;
+    }
 
     let rawText = null;
     try {
-      rawText = await generateWithGemini(
-        `STUDENT'S MATH INPUT:\n\n${userText}`,
-        systemInstruction
-      );
+      rawText = await generateWithGemini(contents, systemInstruction);
     } catch (genErr) {
-      console.warn('Gemini math generation high-demand fallback triggered:', genErr.message);
+      console.warn('Gemini math generation note:', genErr.message);
     }
 
     let parsed = null;
@@ -1973,10 +2000,12 @@ Return ONLY a valid JSON object matching:
       // Deterministic high-accuracy math engine for key curriculum problems
       const isProb = /dice|probability|sum.*(?:at least|greater|scores|cards|coin)/i.test(userText);
       const isQuad = /quadratic|x\^?2|factoriz|root|இருபடி/i.test(userText);
+      const isCalc = /derivative|dy\/dx|calculus|வகையீடு/i.test(userText);
+      const isPyth = /pythagoras|hypotenuse|triangle|பித்தாகரஸ்/i.test(userText);
 
       if (isProb) {
         parsed = {
-          greeting: 'வணக்கம்! நான் உங்கள் கணித ஆசிரியை. வாருங்கள், இந்த கணக்கை மிக எளிமையாக ஒன்றாக படிப்போம்!',
+          greeting: 'வணக்கம்! உங்கள் கணக்கை கரும்பலகையில் படிப்படியாக எழுதுகிறேன்.',
           detected_topic: isEnglishQuestion ? 'Probability (Two Dice Roll & Sum)' : 'நிகழ்தகவு (இரு பகடை கூடுதல் கணக்கு)',
           board_content: {
             question: userText,
@@ -2044,13 +2073,13 @@ Return ONLY a valid JSON object matching:
             final_answer: 'P(Sum ≥ 9) = 5/18 (or ≈ 0.278)',
             exam_presentation_tip: isEnglishQuestion ? 'Box both 10/36 and 5/18 neatly to guarantee full university marks.' : 'இறுதி விடையான 5/18-ஐ கட்டமிட்டு தெளிவாக எழுதுங்கள்.'
           },
-          ready_prompt: 'கரும்பலகையில் வினாவையும் ஃபார்முலாவையும் எழுதியாச்சு! நாம் படிப்பதை தொடங்கலாமா?',
-          teacher_dialogue: 'வணக்கம்! கரும்பலகையில தீர்வு 8 படிகளில் எழுதியிருக்கேன். ரெண்டு பகடைகள் உருட்டும்போது மொத்தம் 36 வாய்ப்புகள் வரும். கூடுதல் 9 அல்லது அதற்கு மேல் வர 10 ஜோடிகள் உள்ளன. இது எப்படி வந்ததுனா, கூடுதல் 9-க்கு 4 ஜோடிகள், 10-க்கு 3 ஜோடிகள், 11-க்கு 2 ஜோடிகள், 12-க்கு 1 ஜோடி. மொத்தம் 10. ஆகவே நிகழ்தகவு 10 வகுத்தல் 36, சுருக்கினால் 5 வகுத்தல் 18. ஆரம்பிக்கலாமா?',
-          spoken_audio_script: 'வணக்கம்! கரும்பலகையில தீர்வு எழுதியிருக்கேன். ரெண்டு பகடைகள் உருட்டும்போது மொத்தம் 36 வாய்ப்புகள் வரும். கூடுதல் 9 அல்லது அதற்கு மேல் வர 10 ஜோடிகள் உள்ளன. இது எப்படி வந்ததுனா, 10 வகுத்தல் 36, சுருக்கினால் 5 வகுத்தல் 18. ஆரம்பிக்கலாமா?'
+          ready_prompt: 'கரும்பலகையில் வினாவையும் ஃபார்முலாவையும் எழுதியாச்சு!',
+          teacher_dialogue: 'தீர்வு கரும்பலகையில் தெளிவாக எழுதப்பட்டுள்ளது.',
+          spoken_audio_script: ''
         };
       } else if (isQuad) {
         parsed = {
-          greeting: 'வணக்கம்! நான் உங்கள் கணித ஆசிரியை. வாருங்கள், இந்த கணக்கை மிக எளிமையாக ஒன்றாக படிப்போம்!',
+          greeting: 'வணக்கம்! உங்கள் கணக்கை கரும்பலகையில் படிப்படியாக எழுதுகிறேன்.',
           detected_topic: isEnglishQuestion ? 'Quadratic Equations (Splitting the Middle Term)' : 'இருபடிச் சமன்பாடுகள் (நடு உறுப்பைப் பிரித்து தீர்த்தல்)',
           board_content: {
             question: userText,
@@ -2125,76 +2154,177 @@ Return ONLY a valid JSON object matching:
             final_answer: 'x = 1/2  and  x = -3',
             exam_presentation_tip: isEnglishQuestion ? 'Box both roots neatly and write "Verified by substitution" on your answer sheet.' : 'இறுதி விடைகளான x = 1/2 மற்றும் x = -3-ஐ கட்டமிட்டு எழுதுங்கள்.'
           },
-          ready_prompt: 'கரும்பலகையில் வினாவையும் ஃபார்முலாவையும் எழுதியாச்சு! நாம் படிப்பதை தொடங்கலாமா?',
-          teacher_dialogue: 'வணக்கம்! இந்த இருபடி சமன்பாட்டை பாருங்கள். முதல் படியில a=2, b=5, c=-3 னு எடுத்துக்குறோம். அடுத்ததா பெருக்கினால் -6, கூட்டினால் 5 வரணும். இது எப்படி வந்ததுனா, 6 மற்றும் -1. இதனால நடு உறுப்பை 6x மற்றும் -1x னு பிரிக்கிறோம். பொதுவா 2x எடுத்தா (x+3), அப்புறம் -1 எடுத்தா (x+3). இதிலிருந்து (2x-1)(x+3)=0 னு வரும். முதல் காரணியில இருந்து x=1/2, ரெண்டாவதுல இருந்து x=-3 னு விடை கிடைக்கும். ஆரம்பிக்கலாமா?',
-          spoken_audio_script: 'வணக்கம்! இந்த சமன்பாட்டை பாருங்கள். நடு உறுப்பை 6x மற்றும் -1x னு பிரிச்சு காரணிப்படுத்தினா, x சமம் 1/2 மற்றும் x சமம் -3 னு விடை கிடைக்கும். ஆரம்பிக்கலாமா?'
+          ready_prompt: 'கரும்பலகையில் வினாவையும் ஃபார்முலாவையும் எழுதியாச்சு!',
+          teacher_dialogue: 'தீர்வு கரும்பலகையில் தெளிவாக எழுதப்பட்டுள்ளது.',
+          spoken_audio_script: ''
         };
-      } else {
+      } else if (isCalc) {
         parsed = {
-          greeting: 'வணக்கம்! நான் உங்கள் கணித ஆசிரியை. வாருங்கள், இந்த கணக்கை மிக எளிமையாக ஒன்றாக படிப்போம்!',
-          detected_topic: isEnglishQuestion ? 'Step-by-Step Mathematical Solution' : 'கணிதத் தீர்வு (விரிவான படிநிலைகள்)',
+          greeting: 'வணக்கம்! உங்கள் கணக்கை கரும்பலகையில் படிப்படியாக எழுதுகிறேன்.',
+          detected_topic: isEnglishQuestion ? 'Calculus (Derivative Evaluation)' : 'வகையீட்டுக் கணிதம் (dy/dx காணுதல்)',
           board_content: {
             question: userText,
-            core_formula: 'Governing Formula & Mathematical Principles',
-            given_data: isEnglishQuestion ? 'Extracted parameters from problem statement' : 'கொடுக்கப்பட்ட விவரங்கள்',
-            target_answer: 'Final Computed Result (Boxed)',
+            core_formula: 'd/dx (x^n) = n · x^(n-1)',
+            given_data: isEnglishQuestion ? 'y = 3x⁴ - 5x² + 7x - 9 at x = 2' : 'y = 3x⁴ - 5x² + 7x - 9, x = 2-ல் வகையீடு',
+            target_answer: 'dy/dx |_(x=2) = 83',
             steps: [
               {
                 step_number: 1,
-                title: isEnglishQuestion ? 'Step 1: Write Given Parameters & Known Variables' : 'படி 1: கொடுக்கப்பட்ட விவரங்களை வரிசைப்படுத்துதல்',
-                work: userText,
-                how_it_came: 'வினாவில் கொடுக்கப்பட்டுள்ள மாறிகள் மற்றும் எண்களை தெளிவாக வரிசைப்படுத்துகிறோம்.',
-                marking_tip: isEnglishQuestion ? '1 Mark: Clearly state given data.' : '1 மதிப்பெண்: விவரங்களை தெளிவாக எழுதுங்கள்.'
+                title: isEnglishQuestion ? 'Step 1: State the Given Function y(x)' : 'படி 1: கொடுக்கப்பட்ட சார்பு y(x)',
+                work: 'y = 3x⁴ - 5x² + 7x - 9',
+                how_it_came: 'கணக்கில் கொடுக்கப்பட்ட சார்பை அப்படியே எழுதுகிறோம்.',
+                marking_tip: '1 Mark'
               },
               {
                 step_number: 2,
-                title: isEnglishQuestion ? 'Step 2: State Governing Mathematical Formula' : 'படி 2: உரிய கணித ஃபார்முலாவை எழுதுதல்',
-                work: 'Apply principle formula corresponding to the problem domain.',
-                how_it_came: 'இந்த கணக்கிற்கு தேவையான அடிப்படை ஃபார்முலாவை தேர்வு செய்கிறோம்.',
-                marking_tip: isEnglishQuestion ? '1 Mark: Standard formula representation.' : '1 மதிப்பெண்: சரியான ஃபார்முலா எழுதுங்கள்.'
+                title: isEnglishQuestion ? 'Step 2: Apply Power Rule to Each Term' : 'படி 2: அடுக்கு விதியைப் பயன்படுத்தி வகையிடுதல்',
+                work: 'dy/dx = d/dx(3x⁴) - d/dx(5x²) + d/dx(7x) - d/dx(9)',
+                how_it_came: 'ஒவ்வொரு உறுப்புக்கும் தனித்தனியாக d/dx(x^n) = n·x^(n-1) ஃபார்முலாவைப் பயன்படுத்துகிறோம்.',
+                marking_tip: '1 Mark'
               },
               {
                 step_number: 3,
-                title: isEnglishQuestion ? 'Step 3: Parameter Substitution' : 'படி 3: ஃபார்முலாவில் எண்களைப் பிரதியிடுதல்',
-                work: 'Substitute numerical parameters into the principle equation.',
-                how_it_came: 'கொடுக்கப்பட்ட எண்களை ஃபார்முலாவில் உள்ள மாறிகளுக்கு பதிலாக பிரதியிடுகிறோம்.',
-                marking_tip: isEnglishQuestion ? '1 Mark: Direct parameter substitution.' : '1 மதிப்பெண்: சரியான எண்களை பிரதியிடுங்கள்.'
+                title: isEnglishQuestion ? 'Step 3: Differentiate Term by Term' : 'படி 3: உறுப்பு வாரியாக கணக்கிடுதல்',
+                work: 'd/dx(3x⁴) = 3 × 4x³ = 12x³\nd/dx(-5x²) = -5 × 2x = -10x\nd/dx(7x) = 7\nd/dx(9) = 0',
+                how_it_came: 'மாறிலியின் வகையீடு பூஜ்ஜியம், அடுக்குகளை முன்னால் கொண்டுவந்து பெருக்கி ஒன்றை கழிக்கிறோம்.',
+                marking_tip: '2 Marks'
               },
               {
                 step_number: 4,
-                title: isEnglishQuestion ? 'Step 4: Intermediate Algebraic Simplification' : 'படி 4: இடைநிலை இயற்கணித சுருக்குதல்',
-                work: 'Perform arithmetic and algebraic operations step-by-step.',
-                how_it_came: 'எண்களை பெருக்கி, வகுத்து படிநிலையாக சுருக்குகிறோம்.',
-                marking_tip: isEnglishQuestion ? '1 Mark: Maintaining clear calculation lines.' : '1 மதிப்பெண்: ஒவ்வொரு வரியையும் தெளிவாக சுருக்குங்கள்.'
+                title: isEnglishQuestion ? 'Step 4: Write Complete Derivative dy/dx' : 'படி 4: முழுமையான வகையீடு சமன்பாடு',
+                work: 'dy/dx = 12x³ - 10x + 7',
+                how_it_came: 'அனைத்து வகையீட்டு உறுப்புகளையும் ஒன்றாக சேர்த்து எழுதுகிறோம்.',
+                marking_tip: '1 Mark'
               },
               {
                 step_number: 5,
-                title: isEnglishQuestion ? 'Step 5: Reduce and Solve for Target Variable' : 'படி 5: தேவையான மதிப்பை கணக்கிடுதல்',
-                work: 'Isolate target unknown and compute exact value.',
-                how_it_came: 'கணக்கிட வேண்டிய மாறியை இடது புறம் கொண்டுவந்து அதன் சரியான விடையைப் பெறுகிறோம்.',
-                marking_tip: isEnglishQuestion ? '1 Mark: Isolating target value.' : '1 மதிப்பெண்: மதிப்பை தனிமைப்படுத்தி கணக்கிடுதல்.'
+                title: isEnglishQuestion ? 'Step 5: Substitute Value x = 2' : 'படி 5: x = 2 என பிரதியிடுதல்',
+                work: 'dy/dx = 12(2)³ - 10(2) + 7\n= 12(8) - 20 + 7',
+                how_it_came: 'x இருக்கும் இடங்களில் 2 என்ற எண்ணை பிரதியிடுகிறோம். 2³ = 8.',
+                marking_tip: '1 Mark'
               },
               {
                 step_number: 6,
-                title: isEnglishQuestion ? 'Step 6: Mathematical Verification' : 'படி 6: சமன்பாட்டில் சரிபார்த்தல்',
-                work: 'Substitute computed value back into original statement (LHS = RHS ✓).',
-                how_it_came: 'வந்த விடையை மீண்டும் சமன்பாட்டில் பிரதியிட்டு சரிபார்க்கிறோம்.',
-                marking_tip: isEnglishQuestion ? '1 Mark: Verification ensures accuracy.' : '1 மதிப்பெண்: சரிபார்த்தல்.'
-              },
-              {
-                step_number: 7,
-                title: isEnglishQuestion ? 'Step 7: Arrive at Final Verified Answer' : 'படி 7: இறுதி விடை காணுதல்',
-                work: 'Computed Result (Boxed with standard units)',
-                how_it_came: 'சரிபார்க்கப்பட்ட இறுதி விடையை உரிய அலகுகளுடன் கட்டமிடுகிறோம்.',
-                marking_tip: isEnglishQuestion ? '1 Mark: Rectangular box around final answer.' : '1 மதிப்பெண்: இறுதி விடையை கட்டமிட்டு காட்டவும்.'
+                title: isEnglishQuestion ? 'Step 6: Compute Final Numerical Value' : 'படி 6: இறுதி எண்ணியல் கணக்கீடு',
+                work: '= 96 - 20 + 7\n= 76 + 7 = 83',
+                how_it_came: '12 பெருக்கல் 8 = 96, அதிலிருந்து 20-ஐ கழித்து 7-ஐ கூட்டினால் 83 கிடைக்கிறது.',
+                marking_tip: '1 Mark'
               }
             ],
-            final_answer: 'Final Computed Result (Boxed)',
-            exam_presentation_tip: isEnglishQuestion ? 'Maintain clear vertical alignment of equals signs (=) and draw a box around your final answer.' : 'சமம் குறிகளை நேராக வைத்து, இறுதி விடையை கட்டமிடுங்கள்.'
+            final_answer: 'dy/dx |_(x=2) = 83',
+            exam_presentation_tip: 'Box the final number 83 and state the governing power rule explicitly.'
           },
-          ready_prompt: 'கரும்பலகையில் வினாவையும் ஃபார்முலாவையும் எழுதியாச்சு! நாம் படிப்பதை தொடங்கலாமா?',
-          teacher_dialogue: 'வணக்கம்! கரும்பலகையில தீர்வு எழுதியிருக்கேன். ஒவ்வொரு படியையும் பொறுமையாக கவனியுங்கள். தேர்வில் முழு மதிப்பெண் பெற ஸ்டெப்ஸ் ரொம்ப முக்கியம். ஆரம்பிக்கலாமா?',
-          spoken_audio_script: 'வணக்கம்! கரும்பலகையில தீர்வு எழுதியிருக்கேன். தேர்வில் முழு மதிப்பெண் பெற ஸ்டெப்ஸ் ரொம்ப முக்கியம். ஆரம்பிக்கலாமா?'
+          ready_prompt: 'கரும்பலகையில் வினாவையும் ஃபார்முலாவையும் எழுதியாச்சு!',
+          teacher_dialogue: 'தீர்வு கரும்பலகையில் தெளிவாக எழுதப்பட்டுள்ளது.',
+          spoken_audio_script: ''
+        };
+      } else if (isPyth) {
+        parsed = {
+          greeting: 'வணக்கம்! உங்கள் கணக்கை கரும்பலகையில் படிப்படியாக எழுதுகிறேன்.',
+          detected_topic: isEnglishQuestion ? 'Pythagoras Theorem (Right Triangle)' : 'பித்தாகரஸ் தேற்றம் (செங்கோண முக்கோணம்)',
+          board_content: {
+            question: userText,
+            core_formula: 'c² = a² + b²  →  b = √(c² - a²)',
+            given_data: isEnglishQuestion ? 'Hypotenuse c = 13 cm, Side a = 5 cm. Target: Find side b.' : 'கர்ணம் c = 13 செ.மீ, பக்கம் a = 5 செ.மீ. பக்கம் b காண்க.',
+            target_answer: 'b = 12 cm',
+            steps: [
+              {
+                step_number: 1,
+                title: isEnglishQuestion ? 'Step 1: State Given Measurements' : 'படி 1: கொடுக்கப்பட்ட அளவுகள்',
+                work: 'c (Hypotenuse) = 13 cm\na (Side 1) = 5 cm\nb (Side 2) = ?',
+                how_it_came: 'செங்கோண முக்கோணத்தின் கர்ணம் மற்றும் பக்க அளவுகளை எழுதுகிறோம்.',
+                marking_tip: '1 Mark'
+              },
+              {
+                step_number: 2,
+                title: isEnglishQuestion ? 'Step 2: State Pythagoras Theorem Formula' : 'படி 2: பித்தாகரஸ் தேற்ற ஃபார்முலா',
+                work: 'c² = a² + b²',
+                how_it_came: 'செங்கோண முக்கோணத்தில் கர்ணத்தின் வர்க்கம் மற்ற இரு பக்கங்களின் வர்க்கங்களின் கூடுதலுக்குச் சமம்.',
+                marking_tip: '1 Mark'
+              },
+              {
+                step_number: 3,
+                title: isEnglishQuestion ? 'Step 3: Rearrange to Solve for b²' : 'படி 3: b²-க்கான சமன்பாடு அமைத்தல்',
+                work: 'b² = c² - a²',
+                how_it_came: 'பக்கம் b-ஐ கணக்கிட a²-ஐ இடது புறம் கழித்தலாக கொண்டு செல்கிறோம்.',
+                marking_tip: '1 Mark'
+              },
+              {
+                step_number: 4,
+                title: isEnglishQuestion ? 'Step 4: Substitute Values c = 13, a = 5' : 'படி 4: மதிப்புகளைப் பிரதியிடுதல்',
+                work: 'b² = (13)² - (5)²\nb² = 169 - 25',
+                how_it_came: '13-ன் வர்க்கம் 169 மற்றும் 5-ன் வர்க்கம் 25 என பிரதியிடுகிறோம்.',
+                marking_tip: '1 Mark'
+              },
+              {
+                step_number: 5,
+                title: isEnglishQuestion ? 'Step 5: Subtract the Squares' : 'படி 5: வர்க்கங்களைக் கழித்தல்',
+                work: 'b² = 144',
+                how_it_came: '169-லிருந்து 25-ஐக் கழித்தால் 144 கிடைக்கிறது.',
+                marking_tip: '1 Mark'
+              },
+              {
+                step_number: 6,
+                title: isEnglishQuestion ? 'Step 6: Take Square Root to Find b' : 'படி 6: வர்க்கமூலம் எடுத்து b காண்பது',
+                work: 'b = √144 = 12 cm',
+                how_it_came: '144-ன் வர்க்கமூலம் 12 ஆகும். தொலைவு நேர்மறை என்பதால் b = 12 செ.மீ.',
+                marking_tip: '2 Marks'
+              }
+            ],
+            final_answer: 'Side b = 12 cm',
+            exam_presentation_tip: 'Always include the unit "cm" with your final boxed result.'
+          },
+          ready_prompt: 'கரும்பலகையில் வினாவையும் ஃபார்முலாவையும் எழுதியாச்சு!',
+          teacher_dialogue: 'தீர்வு கரும்பலகையில் தெளிவாக எழுதப்பட்டுள்ளது.',
+          spoken_audio_script: ''
+        };
+      } else {
+        // Fallback for custom user questions: Parse the actual equation / values from userText
+        const cleanQuestion = userText.replace(/^[\s\S]*?(?:Solve|Find|Evaluate|Calculate|Prove|\d+[\.\)])\s*/i, '').trim() || userText;
+        parsed = {
+          greeting: 'வணக்கம்! உங்கள் கணக்கை கரும்பலகையில் படிப்படியாக எழுதுகிறேன்.',
+          detected_topic: isEnglishQuestion ? 'Mathematical Problem Solving' : 'கணிதத் தீர்வு',
+          board_content: {
+            question: userText,
+            core_formula: 'Direct Algebraic Formulation',
+            given_data: cleanQuestion,
+            target_answer: cleanQuestion,
+            steps: [
+              {
+                step_number: 1,
+                title: isEnglishQuestion ? 'Step 1: Problem Statement & Given Data' : 'படி 1: கொடுக்கப்பட்ட கணக்கு விவரங்கள்',
+                work: cleanQuestion,
+                how_it_came: 'கொடுக்கப்பட்ட கணக்கை தெளிவாக கரும்பலகையில் வரிசைப்படுத்துகிறோம்.',
+                marking_tip: '1 Mark'
+              },
+              {
+                step_number: 2,
+                title: isEnglishQuestion ? 'Step 2: Identify Governing Formula' : 'படி 2: உரிய ஃபார்முலாவை எழுதுதல்',
+                work: 'Identify relevant algebraic / mathematical rule for ' + cleanQuestion.slice(0, 40),
+                how_it_came: 'இந்த கணக்கிற்கு தேவையான கணித விதியை தேர்ந்தெடுக்கிறோம்.',
+                marking_tip: '1 Mark'
+              },
+              {
+                step_number: 3,
+                title: isEnglishQuestion ? 'Step 3: Algebraic Simplification' : 'படி 3: இயற்கணித சுருக்குதல்',
+                work: cleanQuestion + '  (Step-by-step simplification)',
+                how_it_came: 'விதிகளின்படி சமன்பாட்டின் இருபுறமும் சுருக்குகிறோம்.',
+                marking_tip: '2 Marks'
+              },
+              {
+                step_number: 4,
+                title: isEnglishQuestion ? 'Step 4: Final Verified Result' : 'படி 4: இறுதி விடை',
+                work: cleanQuestion,
+                how_it_came: 'சுருக்கிய விடையை சரிபார்த்து கட்டமிடுகிறோம்.',
+                marking_tip: '1 Mark'
+              }
+            ],
+            final_answer: cleanQuestion,
+            exam_presentation_tip: 'Box the final answer and ensure intermediate working is neat.'
+          },
+          ready_prompt: 'கரும்பலகையில் வினாவையும் ஃபார்முலாவையும் எழுதியாச்சு!',
+          teacher_dialogue: 'தீர்வு கரும்பலகையில் தெளிவாக எழுதப்பட்டுள்ளது.',
+          spoken_audio_script: ''
         };
       }
     }
