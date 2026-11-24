@@ -85,13 +85,17 @@ router.post('/create-order', async (req, res) => {
   }
 });
 
+// Verified payment cache by phone number (clears daily at midnight)
+// Key: 10-digit clean mobile number, Value: { paidDate, expiresAt, paymentId }
+const verifiedPhonesToday = new Map();
+
 /**
  * POST /api/payment/verify
  * Verifies live Razorpay payment signature & returns midnight expiration
  */
 router.post('/verify', (req, res) => {
   try {
-    const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = req.body;
+    const { razorpay_order_id, razorpay_payment_id, razorpay_signature, mobile } = req.body;
 
     if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
       return res.status(400).json({
@@ -108,6 +112,18 @@ router.post('/verify', (req, res) => {
     if (generatedSignature === razorpay_signature) {
       const expiresAt = getNextMidnightTimestamp();
       const paidDate = getTodayDateString();
+
+      if (mobile) {
+        const cleanMobile = String(mobile).replace(/\D/g, '').slice(-10);
+        if (cleanMobile.length === 10) {
+          verifiedPhonesToday.set(cleanMobile, {
+            paidDate,
+            expiresAt,
+            paymentId: razorpay_payment_id
+          });
+          console.log(`📱 Phone ${cleanMobile} recorded as paid for today until midnight.`);
+        }
+      }
 
       console.log(`✅ Live Razorpay Payment Verified: ${razorpay_payment_id} (Expires at midnight: ${new Date(expiresAt).toLocaleString()})`);
       return res.status(200).json({
@@ -135,6 +151,61 @@ router.post('/verify', (req, res) => {
       error: error.message
     });
   }
+});
+
+/**
+ * POST /api/payment/check-phone
+ * Checks if a 10-digit mobile number has already paid ₹1 for today
+ */
+router.post('/check-phone', (req, res) => {
+  try {
+    const { mobile } = req.body || {};
+    if (!mobile) return res.json({ success: true, paid: false });
+
+    const cleanMobile = String(mobile).replace(/\D/g, '').slice(-10);
+    const now = Date.now();
+    const today = getTodayDateString();
+    const record = verifiedPhonesToday.get(cleanMobile);
+
+    if (record && record.paidDate === today && now < record.expiresAt) {
+      return res.json({
+        success: true,
+        paid: true,
+        mobile: cleanMobile,
+        paidDate: record.paidDate,
+        expiresAt: record.expiresAt,
+        paymentId: record.paymentId,
+        message: 'Active pass found for this phone number.'
+      });
+    }
+    return res.json({ success: true, paid: false });
+  } catch (err) {
+    return res.status(500).json({ success: false, paid: false, error: err.message });
+  }
+});
+
+/**
+ * GET /api/payment/check-phone?mobile=9876543210
+ */
+router.get('/check-phone', (req, res) => {
+  const { mobile } = req.query || {};
+  if (!mobile) return res.json({ success: true, paid: false });
+  const cleanMobile = String(mobile).replace(/\D/g, '').slice(-10);
+  const now = Date.now();
+  const today = getTodayDateString();
+  const record = verifiedPhonesToday.get(cleanMobile);
+
+  if (record && record.paidDate === today && now < record.expiresAt) {
+    return res.json({
+      success: true,
+      paid: true,
+      mobile: cleanMobile,
+      paidDate: record.paidDate,
+      expiresAt: record.expiresAt,
+      paymentId: record.paymentId
+    });
+  }
+  return res.json({ success: true, paid: false });
 });
 
 module.exports = router;

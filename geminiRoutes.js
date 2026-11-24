@@ -1751,15 +1751,16 @@ router.post('/extract-image-text', async (req, res) => {
     const promptText = `You are an expert academic OCR and handwriting transcription engine for university students.
 Carefully inspect this image, which may contain:
 - Student handwritten notes (cursive, ballpoint pen, pencil, quick notebook writing, diagrams with labels, marginal annotations)
-- Printed textbook pages, syllabus outlines, question papers, or digital notes.
+- Printed textbook pages, syllabus outlines, question papers, mobile screenshots (WhatsApp, Instagram, Telegram), or digital notes
+- Mathematics problems, step-by-step proofs, formulas, equations, or exam questions in English, Tamil, Hindi, Telugu, Malayalam, Kannada.
 
 TRANSCRIPTION INSTRUCTIONS:
-1. Accurately transcribe and reconstruct all readable handwritten notes, definitions, formulas, questions, code, bullet points, and headings.
-2. Intelligently decipher difficult or messy handwriting using academic and technical context (computer science, engineering, physics, chemistry, mathematics, medicine, school syllabus). Fix obvious pen stroke ambiguities based on technical vocabulary (e.g., 'Operating System', 'Pointer', 'Velocity', 'Linked List', 'Inheritance', 'Algorithm').
-3. NEVER invent random symbols or output isolated garbage characters (e.g., DO NOT output '©', '®', '™', standalone semicolons, random single letters like 'PE ©', 'Ey', '. p='). If a character or line is illegible noise, omit the garbage characters and preserve only coherent words.
+1. Accurately transcribe and reconstruct all readable handwritten notes, definitions, formulas, questions, target answers, code, bullet points, and headings.
+2. Intelligently decipher difficult or messy handwriting using academic and technical context. Even if notes are brief or single math questions, transcribe them accurately without throwing away valid lines.
+3. NEVER invent random symbols or output isolated garbage characters (e.g., DO NOT output '©', '®', '™', standalone semicolons, or random single letters like 'PE ©', 'Ey', '. p=').
 4. STRICT PURE MATHEMATICAL & FORMULA NOTATION (ZERO RAW LATEX / NO DOLLAR SIGNS):
    - Never output raw LaTeX or wrap formulas, variables, or expressions in dollar signs ($...$ or $...$).
-   - If equations, matrices, or formulas are present, transcribe them cleanly using readable standard Unicode characters (e.g., x² + 5x + 6 = 0, O(V²), O(E log V), E = mc², V = IR, Balance Factor = Height(L) - Height(R)).
+   - If equations, matrices, or formulas are present, transcribe them cleanly using readable standard Unicode characters (e.g., x² + 5x + 6 = 0, O(V²), O(E log V), E = mc², V = IR).
 5. Preserve logical paragraphs, numbered lists, bullet points, and section titles.
 6. Output ONLY the clean transcribed study text directly. Do not wrap in markdown code block backticks (no \`\`\`), do not add conversational remarks like "Here is the extracted text:".`;
 
@@ -1782,7 +1783,7 @@ TRANSCRIPTION INSTRUCTIONS:
             contents,
             config: { temperature: 0.1 }
           }),
-          18000,
+          35000,
           `Gemini Vision (${model})`
         );
         if (response && response.text) {
@@ -1897,22 +1898,31 @@ router.post('/math-teacher-lesson', async (req, res) => {
     const boardLanguage = isEnglishQuestion ? 'English' : 'Tamil (தமிழ்)';
 
     const systemInstruction = `You are the AI Math Teacher Girl inside EDU Mind AI.
-You are a warm, sweet, encouraging female mathematics teacher standing in front of a classroom chalkboard.
+You are an expert, encouraging female mathematics teacher standing in front of a two-part classroom chalkboard.
 
-PEDAGOGICAL & LANGUAGE RULES (HIGHEST PRIORITY):
-1. WRITTEN BLACKBOARD CONTENT ("board_content"):
-   - MUST BE WRITTEN IN: ${boardLanguage}.
-   - ${isEnglishQuestion ? 'Since the user question is in English, write the question, formula, steps, calculations, marking tips, and final answer STRICTLY IN CLEAR UNIVERSITY-STANDARD ENGLISH so the student can copy it into their exam answer sheet.' : 'Since the user question is in Tamil, write all steps, formulas, and answers in Tamil.'}
-   - STRICT DETAILED STEP REQUIREMENT: Provide 6 to 10 granular, complete steps in "steps" array. Show EVERY single intermediate mathematical manipulation, given data, formula, full numerical substitution, expansion, intermediate calculations, roots/fractions, verification, and final boxed answer! NEVER skip steps or summarize in 3-4 short lines. University exams award marks for each line of intermediate working!
-   - All formulas and calculations must use clean Unicode (NO raw LaTeX $ or \\).
+TWO-PART SPLIT BOARD STRUCTURE:
+The chalkboard is divided into two distinct parts:
+PART 1: Problem Statement, Given Data, Governing Formula, and Target Answer to be Proven.
+PART 2: Complete Hand-Written Style Step-by-Step Proof and Derivation with "how each step came about" (இது எப்படி வந்தது).
 
-2. SPOKEN WALKTHROUGH & AUDIO SCRIPT ("teacher_dialogue" and "spoken_audio_script"):
-   - MUST BE SPOKEN IN NATURAL, EVERYDAY SPOKEN TAMIL (இயல்பான எளிய அன்றாடப் பேச்சுத் தமிழ்)!
-   - Explain how each step was derived, step by step, and why/how that result came ("இது எப்படி வந்தது"):
-     e.g., "வணக்கம்! கரும்பலகையில நான் ஸ்டெப் பை ஸ்டெப் தீர்வு எழுதியிருக்கேன். முதல் படியில என்ன கொடுத்திருக்காங்கனு பார்க்கலாம்... இந்த எண்கள் எப்படி வந்ததுனா... இதை தேர்வில் இப்படி எழுதினால் முழு மதிப்பெண் கிடைக்கும்..."
-   - NO heavy bookish or archaic Tamil words. Speak in a gentle, caring female teacher voice that students easily understand without hesitation or stuttering.
-
-3. "ready_prompt": "கரும்பலகையில் கேள்வியையும் சூத்திரத்தையும் எழுதியாச்சு! நாம் பாடத்தை தொடங்கலாமா? (Shall we start?)"
+STRICT VOCABULARY & LANGUAGE RULES:
+1. STRICTLY ELIMINATE and NEVER use the archaic or obscure word "சூத்திரம்" ("Sooththiram").
+2. ALWAYS use everyday, student-friendly terms: "Formula" (ஃபார்முலா) or "சமன்பாடு" (Equation).
+3. ALWAYS use simple spoken/written everyday language: "விடை" (Answer), "வழிமுறை" (Method), "இது எப்படி வந்தது" (How it came about).
+4. IF user question/notes are in English:
+   - Written blackboard equations, question, given data, formula, and steps are in clear, university-standard English.
+   - The "how_it_came" field in each step is written in simple everyday conversational Tamil ("இது எப்படி வந்தது: மேலே உள்ள சமன்பாட்டில்...") so Tamil students immediately grasp how each step was derived!
+5. IF user question/notes are in Tamil:
+   - Both written equations and "how_it_came" explanations are in simple everyday Tamil.
+6. IF the user uploads a question that already includes the answer or target result to prove (e.g. "Prove that LHS = RHS", or question with target answer):
+   - In PART 1, set "target_answer" to that expected answer or result to be proven!
+   - In PART 2, provide the complete, uninterrupted step-by-step mathematical proof (6 to 10 granular steps) showing how to reach that target answer from the initial equation.
+7. FOR EVERY STEP IN "steps":
+   - "step_number": integer (1, 2, 3...)
+   - "title": brief title of the step
+   - "work": exact mathematical equation or algebraic operation in clean Unicode (NO raw LaTeX $ or \\).
+   - "how_it_came": clear explanation of why this step follows, what was substituted or factored, and how this result came about ("இது எப்படி வந்தது: ...").
+   - "marking_tip": exam mark breakdown (e.g. "1 Mark: Correct factorization").
 
 Return ONLY a valid JSON object matching:
 {
@@ -1920,21 +1930,23 @@ Return ONLY a valid JSON object matching:
   "detected_topic": "${isEnglishQuestion ? 'Topic Title in English' : 'Topic Title in Tamil'}",
   "board_content": {
     "question": "Full problem statement",
-    "core_formula": "Standard governing formula",
+    "core_formula": "Governing Formula (Labeled as Formula / ஃபார்முலா, NOT சூத்திரம்)",
     "given_data": "Extracted problem values and parameters",
+    "target_answer": "Target answer or result to be proven",
     "steps": [
       {
         "step_number": 1,
         "title": "Clear step title",
         "work": "Detailed intermediate mathematical equation/working",
+        "how_it_came": "Simple conversational explanation of how this line was derived (இது எப்படி வந்தது: ...)",
         "marking_tip": "University exam marking criteria"
       }
     ],
     "final_answer": "Complete final boxed result",
     "exam_presentation_tip": "Tips on how to box and align work for maximum scoring"
   },
-  "ready_prompt": "கரும்பலகையில் கேள்வியையும் சூத்திரத்தையும் எழுதியாச்சு! நாம் பாடத்தை தொடங்கலாமா?",
-  "teacher_dialogue": "Spoken walkthrough in natural everyday conversational Tamil explaining how each step works and idhu eppadi vandhuchu...",
+  "ready_prompt": "கரும்பலகையில் வினாவையும் ஃபார்முலாவையும் எழுதியாச்சு! நாம் படிப்பதை தொடங்கலாமா?",
+  "teacher_dialogue": "Spoken walkthrough in natural everyday conversational Tamil explaining each step and idhu eppadi vandhuchu...",
   "spoken_audio_script": "Clean script in natural everyday conversational Tamil for female TTS narration..."
 }`;
 
@@ -1970,60 +1982,69 @@ Return ONLY a valid JSON object matching:
             question: userText,
             core_formula: 'P(Event E) = n(E) / n(S)',
             given_data: isEnglishQuestion ? 'Two fair 6-faced dice are rolled simultaneously. Target Event E: Sum of scores ≥ 9.' : 'இரண்டு பகடைகள் உருட்டப்படுகின்றன. நிகழ்வு E: கூடுதல் ≥ 9.',
+            target_answer: 'P(Sum ≥ 9) = 5/18 (≈ 0.2778)',
             steps: [
               {
                 step_number: 1,
                 title: isEnglishQuestion ? 'Step 1: Define Total Sample Space S' : 'படி 1: மொத்த மாதிரி வெளி S வரையறுத்தல்',
                 work: 'S = {(1,1), (1,2), ..., (1,6),\n     (2,1), (2,2), ..., (2,6),\n     (3,1), ..., (6,6)}',
+                how_it_came: 'இரு பகடைகளை ஒரே நேரத்தில் உருட்டும் போது கிடைக்கக்கூடிய அனைத்து ஜோடி எண்களின் தொகுப்பே மாதிரி வெளி S ஆகும்.',
                 marking_tip: isEnglishQuestion ? '1 Mark: Formally stating sample space notation S.' : '1 மதிப்பெண்: மாதிரி வெளி S-ஐ தெளிவாக எழுதுங்கள்.'
               },
               {
                 step_number: 2,
                 title: isEnglishQuestion ? 'Step 2: Calculate Total Number of Outcomes n(S)' : 'படி 2: மொத்த நிகழ்வுகளின் எண்ணிக்கை n(S)',
                 work: 'n(S) = 6 × 6 = 36 outcomes',
+                how_it_came: 'முதல் பகடையில் 6 முகங்கள், இரண்டாவது பகடையில் 6 முகங்கள். ஆகவே 6 பெருக்கல் 6 = 36 மொத்த வாய்ப்புகள்.',
                 marking_tip: isEnglishQuestion ? '1 Mark: Specifying n(S) = 36 explicitly.' : '1 மதிப்பெண்: n(S) = 36 என குறிப்பிடுங்கள்.'
               },
               {
                 step_number: 3,
                 title: isEnglishQuestion ? 'Step 3: Define Event Condition (Sum ≥ 9)' : 'படி 3: நிகழ்வின் நிபந்தனையை அறிதல்',
                 work: 'Possible score sums ≥ 9 are: Sum = 9, Sum = 10, Sum = 11, Sum = 12',
+                how_it_came: 'கூடுதல் குறைந்தது 9 என்றால், முக எண்களின் கூடுதல் 9, 10, 11, அல்லது 12 ஆக இருக்க வேண்டும்.',
                 marking_tip: isEnglishQuestion ? '1 Mark: Partitioning into disjoint sum conditions.' : '1 மதிப்பெண்: 9, 10, 11, 12 என பிரித்து எழுதுங்கள்.'
               },
               {
                 step_number: 4,
                 title: isEnglishQuestion ? 'Step 4: Enumerate Favorable Outcomes for Sum = 9' : 'படி 4: கூடுதல் = 9 தரும் ஜோடிகள்',
                 work: 'Pairs: (3,6), (4,5), (5,4), (6,3) → 4 pairs',
+                how_it_came: 'கூட்டினால் 9 வரும் ஜோடிகளை ஒவ்வொன்றாக வரிசைப்படுத்துகிறோம்: 3+6, 4+5, 5+4, 6+3 என மொத்தம் 4 ஜோடிகள்.',
                 marking_tip: isEnglishQuestion ? '1 Mark: All 4 pairs for sum 9.' : '1 மதிப்பெண்: 4 ஜோடிகளையும் பட்டியலிடுங்கள்.'
               },
               {
                 step_number: 5,
                 title: isEnglishQuestion ? 'Step 5: Enumerate Favorable Outcomes for Sum = 10' : 'படி 5: கூடுதல் = 10 தரும் ஜோடிகள்',
                 work: 'Pairs: (4,6), (5,5), (6,4) → 3 pairs',
+                how_it_came: 'கூட்டினால் 10 வரும் ஜோடிகள்: 4+6, 5+5, 6+4 என மொத்தம் 3 ஜோடிகள்.',
                 marking_tip: isEnglishQuestion ? '1 Mark: All 3 pairs for sum 10.' : '1 மதிப்பெண்: 3 ஜோடிகளையும் பட்டியலிடுங்கள்.'
               },
               {
                 step_number: 6,
                 title: isEnglishQuestion ? 'Step 6: Enumerate Favorable Outcomes for Sum = 11 & 12' : 'படி 6: கூடுதல் = 11 மற்றும் 12 தரும் ஜோடிகள்',
                 work: 'Sum = 11: (5,6), (6,5) → 2 pairs\nSum = 12: (6,6) → 1 pair',
+                how_it_came: 'கூட்டினால் 11 வர (5,6), (6,5) என 2 ஜோடிகளும், 12 வர (6,6) என 1 ஜோடியும் வருகின்றன.',
                 marking_tip: isEnglishQuestion ? '1 Mark: Pairs for 11 and 12.' : '1 மதிப்பெண்: 11 மற்றும் 12 ஜோடிகள்.'
               },
               {
                 step_number: 7,
                 title: isEnglishQuestion ? 'Step 7: Compute Total Favorable Outcomes n(E)' : 'படி 7: மொத்த சாதகமான ஜோடிகள் n(E)',
                 work: 'n(E) = 4 + 3 + 2 + 1 = 10 outcomes',
+                how_it_came: 'அனைத்து சாதகமான ஜோடிகளையும் கூட்டும் போது: 4 + 3 + 2 + 1 = 10 வாய்ப்புகள்.',
                 marking_tip: isEnglishQuestion ? '1 Mark: Summation n(E) = 10.' : '1 மதிப்பெண்: n(E) = 10 என கூட்டுதல்.'
               },
               {
                 step_number: 8,
-                title: isEnglishQuestion ? 'Step 8: Apply Formula & Simplify Fraction' : 'படி 8: நிகழ்தகவு சூத்திரம் மற்றும் சுருக்குதல்',
+                title: isEnglishQuestion ? 'Step 8: Apply Formula & Simplify Fraction' : 'படி 8: நிகழ்தகவு ஃபார்முலா மற்றும் சுருக்குதல்',
                 work: 'P(Sum ≥ 9) = n(E) / n(S) = 10 / 36 = 5 / 18 ≈ 0.2778',
+                how_it_came: 'நிகழ்தகவு ஃபார்முலாவில் n(E)=10 மற்றும் n(S)=36-ஐ பிரதியிட்டு, 2-ஆல் மேலேயும் கீழேயும் வகுத்து சுருக்கும் போது 5/18 விடை கிடைக்கிறது.',
                 marking_tip: isEnglishQuestion ? '2 Marks: Both 10/36 and reduced 5/18.' : '2 மதிப்பெண்: 10/36 மற்றும் 5/18 விடை.'
               }
             ],
             final_answer: 'P(Sum ≥ 9) = 5/18 (or ≈ 0.278)',
             exam_presentation_tip: isEnglishQuestion ? 'Box both 10/36 and 5/18 neatly to guarantee full university marks.' : 'இறுதி விடையான 5/18-ஐ கட்டமிட்டு தெளிவாக எழுதுங்கள்.'
           },
-          ready_prompt: 'கரும்பலகையில் கேள்வியையும் சூத்திரத்தையும் எழுதியாச்சு! நாம் பாடத்தை தொடங்கலாமா?',
+          ready_prompt: 'கரும்பலகையில் வினாவையும் ஃபார்முலாவையும் எழுதியாச்சு! நாம் படிப்பதை தொடங்கலாமா?',
           teacher_dialogue: 'வணக்கம்! கரும்பலகையில தீர்வு 8 படிகளில் எழுதியிருக்கேன். ரெண்டு பகடைகள் உருட்டும்போது மொத்தம் 36 வாய்ப்புகள் வரும். கூடுதல் 9 அல்லது அதற்கு மேல் வர 10 ஜோடிகள் உள்ளன. இது எப்படி வந்ததுனா, கூடுதல் 9-க்கு 4 ஜோடிகள், 10-க்கு 3 ஜோடிகள், 11-க்கு 2 ஜோடிகள், 12-க்கு 1 ஜோடி. மொத்தம் 10. ஆகவே நிகழ்தகவு 10 வகுத்தல் 36, சுருக்கினால் 5 வகுத்தல் 18. ஆரம்பிக்கலாமா?',
           spoken_audio_script: 'வணக்கம்! கரும்பலகையில தீர்வு எழுதியிருக்கேன். ரெண்டு பகடைகள் உருட்டும்போது மொத்தம் 36 வாய்ப்புகள் வரும். கூடுதல் 9 அல்லது அதற்கு மேல் வர 10 ஜோடிகள் உள்ளன. இது எப்படி வந்ததுனா, 10 வகுத்தல் 36, சுருக்கினால் 5 வகுத்தல் 18. ஆரம்பிக்கலாமா?'
         };
@@ -2035,67 +2056,77 @@ Return ONLY a valid JSON object matching:
             question: userText,
             core_formula: 'ax² + bx + c = 0 → Factor into (px + r)(qx + s) = 0',
             given_data: isEnglishQuestion ? 'Given quadratic equation: 2x² + 5x - 3 = 0' : 'கொடுக்கப்பட்ட சமன்பாடு: 2x² + 5x - 3 = 0',
+            target_answer: 'x = 1/2  and  x = -3',
             steps: [
               {
                 step_number: 1,
                 title: isEnglishQuestion ? 'Step 1: Identify Standard Coefficients a, b, c' : 'படி 1: கெழுக்களை அடையாளம் காணுதல் a, b, c',
                 work: 'Comparing with ax² + bx + c = 0:\na = 2,  b = 5,  c = -3',
+                how_it_came: 'இருபடி சமன்பாட்டின் பொதுவான வடிவமான ax² + bx + c = 0 உடன் ஒப்பிட்டு a, b, c மதிப்புகளை எடுக்கிறோம்.',
                 marking_tip: isEnglishQuestion ? '1 Mark: Correct identification of coefficients.' : '1 மதிப்பெண்: a, b, c மதிப்புகளை சரியாக எழுதுதல்.'
               },
               {
                 step_number: 2,
                 title: isEnglishQuestion ? 'Step 2: Calculate Product and Sum Requirements' : 'படி 2: பெருக்கல் மற்றும் கூடுதல் நிபந்தனை',
                 work: 'Product (ac) = 2 × (-3) = -6\nSum (b) = +5',
+                how_it_came: 'நடு உறுப்பைப் பிரிக்க a மற்றும் c-ஐ பெருக்கி -6 என்றும், b மதிப்பான 5 கூட்டல் தொகையாகவும் கொள்கிறோம்.',
                 marking_tip: isEnglishQuestion ? '1 Mark: Stating product = -6 and sum = 5.' : '1 மதிப்பெண்: பெருக்கல் -6, கூடுதல் 5 என குறிப்பிடுதல்.'
               },
               {
                 step_number: 3,
                 title: isEnglishQuestion ? 'Step 3: Find the Factor Pair' : 'படி 3: பொருத்தமான இரு எண்களைக் கண்டறிதல்',
                 work: 'Factors of -6 that add up to +5:\n(+6) × (-1) = -6   and   (+6) + (-1) = +5\nSelected pair: +6 and -1',
+                how_it_came: 'பெருக்கினால் -6, கூட்டினால் +5 தரக்கூடிய இரண்டு எண்கள் +6 மற்றும் -1 ஆகும்.',
                 marking_tip: isEnglishQuestion ? '1 Mark: Identifying pair (+6, -1).' : '1 மதிப்பெண்: (+6, -1) எண்களை கண்டறிதல்.'
               },
               {
                 step_number: 4,
                 title: isEnglishQuestion ? 'Step 4: Split the Middle Term (+5x)' : 'படி 4: நடு உறுப்பை (+5x) பிரித்து எழுதுதல்',
                 work: '2x² + 6x - 1x - 3 = 0',
+                how_it_came: 'கண்டறிந்த +6 மற்றும் -1 எண்களைக் கொண்டு நடு உறுப்பான 5x என்பதை 6x - 1x என பிரித்து எழுதுகிறோம்.',
                 marking_tip: isEnglishQuestion ? '1 Mark: Splitting 5x into 6x - 1x.' : '1 மதிப்பெண்: 5x-ஐ 6x - 1x என பிரித்தல்.'
               },
               {
                 step_number: 5,
                 title: isEnglishQuestion ? 'Step 5: Group and Factor Common Terms' : 'படி 5: பொதுவான உறுப்புகளை வெளியே எடுத்தல்',
                 work: 'From first two terms: 2x(x + 3)\nFrom last two terms: -1(x + 3)\nResult: 2x(x + 3) - 1(x + 3) = 0',
+                how_it_came: 'முதல் இரு உறுப்புகளில் 2x-ஐ பொதுவாக எடுத்தால் (x+3) கிடைக்கிறது, அடுத்த இரு உறுப்புகளில் -1-ஐ எடுத்தால் (x+3) கிடைக்கிறது.',
                 marking_tip: isEnglishQuestion ? '2 Marks: Factoring 2x and -1 accurately.' : '2 மதிப்பெண்: 2x மற்றும் -1-ஐ பொதுவாக எடுத்தல்.'
               },
               {
                 step_number: 6,
                 title: isEnglishQuestion ? 'Step 6: Factor Out the Common Binomial (x + 3)' : 'படி 6: பொதுவான காரணியை வெளியே எடுத்தல்',
                 work: '(2x - 1)(x + 3) = 0',
+                how_it_came: 'இரு பகுதிகளிலும் பொதுவான (x + 3) காரணியை வெளியே எடுத்தால் (2x - 1)(x + 3) = 0 கிடைக்கிறது.',
                 marking_tip: isEnglishQuestion ? '1 Mark: Factored linear product form.' : '1 மதிப்பெண்: காரணிகளின் பெருக்கலாக எழுதுதல்.'
               },
               {
                 step_number: 7,
                 title: isEnglishQuestion ? 'Step 7: Solve First Linear Factor (2x - 1 = 0)' : 'படி 7: முதல் மூலத்தைக் கண்டறிதல்',
                 work: '2x - 1 = 0  →  2x = 1  →  x = 1/2',
+                how_it_came: 'முதல் காரணியான 2x - 1-ஐ பூஜ்யத்திற்கு சமன் செய்து சுருக்கும் போது x = 1/2 விடை கிடைக்கிறது.',
                 marking_tip: isEnglishQuestion ? '1 Mark: First root x = 1/2.' : '1 மதிப்பெண்: முதல் மூலம் x = 1/2.'
               },
               {
                 step_number: 8,
                 title: isEnglishQuestion ? 'Step 8: Solve Second Linear Factor (x + 3 = 0)' : 'படி 8: இரண்டாவது மூலத்தைக் கண்டறிதல்',
                 work: 'x + 3 = 0  →  x = -3',
+                how_it_came: 'இரண்டாவது காரணியான x + 3-ஐ பூஜ்யத்திற்கு சமன் செய்யும் போது x = -3 விடை கிடைக்கிறது.',
                 marking_tip: isEnglishQuestion ? '1 Mark: Second root x = -3.' : '1 மதிப்பெண்: இரண்டாவது மூலம் x = -3.'
               },
               {
                 step_number: 9,
                 title: isEnglishQuestion ? 'Step 9: Verification by Substitution' : 'படி 9: மூலங்களை சமன்பாட்டில் சரிபார்த்தல்',
                 work: 'For x = -3: 2(-3)² + 5(-3) - 3 = 2(9) - 15 - 3 = 18 - 18 = 0 (LHS = RHS ✓)\nFor x = 1/2: 2(1/4) + 5/2 - 3 = 1/2 + 5/2 - 3 = 3 - 3 = 0 (LHS = RHS ✓)',
+                how_it_came: 'கண்டறிந்த x மதிப்புகளை ஆரம்ப சமன்பாட்டில் பிரதியிட்டு இடது பக்கம் = வலது பக்கம் = 0 என சரிபார்க்கிறோம்.',
                 marking_tip: isEnglishQuestion ? '1 Mark: Clear verification confirms 100% full marks.' : '1 மதிப்பெண்: சரிபார்த்தல் முழு மதிப்பெண்ணை உறுதி செய்கிறது.'
               }
             ],
             final_answer: 'x = 1/2  and  x = -3',
             exam_presentation_tip: isEnglishQuestion ? 'Box both roots neatly and write "Verified by substitution" on your answer sheet.' : 'இறுதி விடைகளான x = 1/2 மற்றும் x = -3-ஐ கட்டமிட்டு எழுதுங்கள்.'
           },
-          ready_prompt: 'கரும்பலகையில் கேள்வியையும் சூத்திரத்தையும் எழுதியாச்சு! நாம் பாடத்தை தொடங்கலாமா?',
-          teacher_dialogue: 'வணக்கம்! இந்த இருபடி சமன்பாட்டை பாருங்கள். முதல் படியில a=2, b=5, c=-3 னு எடுத்துக்குறோம். அடுத்ததா பெருக்கினால் -6, கூட்டினால் 5 வரணும். இது எப்படி வந்ததுனா, 6 மற்றும் -1. இதனால நடு உறுப்பை 6x மற்றும் -1x னு பிரிக்கிறோம். பொதுவா 2x எடுத்தா (x+3), அப்புறம் -1 எடுத்தா (x+3). இதிலிருந்து (2x-1)(x+3)=0 னு வரும். முதல் காரணியில இருந்து x=1/2, ரெண்டாவதுல இருந்து x=-3 னு விடை கிடைக்கும். இதை தேர்வில் இந்த மாதிரி எழுதினா முழு மதிப்பெண் கிடைக்கும். ஆரம்பிக்கலாமா?',
+          ready_prompt: 'கரும்பலகையில் வினாவையும் ஃபார்முலாவையும் எழுதியாச்சு! நாம் படிப்பதை தொடங்கலாமா?',
+          teacher_dialogue: 'வணக்கம்! இந்த இருபடி சமன்பாட்டை பாருங்கள். முதல் படியில a=2, b=5, c=-3 னு எடுத்துக்குறோம். அடுத்ததா பெருக்கினால் -6, கூட்டினால் 5 வரணும். இது எப்படி வந்ததுனா, 6 மற்றும் -1. இதனால நடு உறுப்பை 6x மற்றும் -1x னு பிரிக்கிறோம். பொதுவா 2x எடுத்தா (x+3), அப்புறம் -1 எடுத்தா (x+3). இதிலிருந்து (2x-1)(x+3)=0 னு வரும். முதல் காரணியில இருந்து x=1/2, ரெண்டாவதுல இருந்து x=-3 னு விடை கிடைக்கும். ஆரம்பிக்கலாமா?',
           spoken_audio_script: 'வணக்கம்! இந்த சமன்பாட்டை பாருங்கள். நடு உறுப்பை 6x மற்றும் -1x னு பிரிச்சு காரணிப்படுத்தினா, x சமம் 1/2 மற்றும் x சமம் -3 னு விடை கிடைக்கும். ஆரம்பிக்கலாமா?'
         };
       } else {
@@ -2106,54 +2137,62 @@ Return ONLY a valid JSON object matching:
             question: userText,
             core_formula: 'Governing Formula & Mathematical Principles',
             given_data: isEnglishQuestion ? 'Extracted parameters from problem statement' : 'கொடுக்கப்பட்ட விவரங்கள்',
+            target_answer: 'Final Computed Result (Boxed)',
             steps: [
               {
                 step_number: 1,
                 title: isEnglishQuestion ? 'Step 1: Write Given Parameters & Known Variables' : 'படி 1: கொடுக்கப்பட்ட விவரங்களை வரிசைப்படுத்துதல்',
                 work: userText,
+                how_it_came: 'வினாவில் கொடுக்கப்பட்டுள்ள மாறிகள் மற்றும் எண்களை தெளிவாக வரிசைப்படுத்துகிறோம்.',
                 marking_tip: isEnglishQuestion ? '1 Mark: Clearly state given data.' : '1 மதிப்பெண்: விவரங்களை தெளிவாக எழுதுங்கள்.'
               },
               {
                 step_number: 2,
-                title: isEnglishQuestion ? 'Step 2: State Governing Mathematical Formula' : 'படி 2: உரிய கணித சூத்திரத்தை எழுதுதல்',
+                title: isEnglishQuestion ? 'Step 2: State Governing Mathematical Formula' : 'படி 2: உரிய கணித ஃபார்முலாவை எழுதுதல்',
                 work: 'Apply principle formula corresponding to the problem domain.',
-                marking_tip: isEnglishQuestion ? '1 Mark: Standard formula representation.' : '1 மதிப்பெண்: சரியான சூத்திரம் எழுதுங்கள்.'
+                how_it_came: 'இந்த கணக்கிற்கு தேவையான அடிப்படை ஃபார்முலாவை தேர்வு செய்கிறோம்.',
+                marking_tip: isEnglishQuestion ? '1 Mark: Standard formula representation.' : '1 மதிப்பெண்: சரியான ஃபார்முலா எழுதுங்கள்.'
               },
               {
                 step_number: 3,
-                title: isEnglishQuestion ? 'Step 3: Parameter Substitution' : 'படி 3: சூத்திரத்தில் எண்களைப் பிரதியிடுதல்',
+                title: isEnglishQuestion ? 'Step 3: Parameter Substitution' : 'படி 3: ஃபார்முலாவில் எண்களைப் பிரதியிடுதல்',
                 work: 'Substitute numerical parameters into the principle equation.',
+                how_it_came: 'கொடுக்கப்பட்ட எண்களை ஃபார்முலாவில் உள்ள மாறிகளுக்கு பதிலாக பிரதியிடுகிறோம்.',
                 marking_tip: isEnglishQuestion ? '1 Mark: Direct parameter substitution.' : '1 மதிப்பெண்: சரியான எண்களை பிரதியிடுங்கள்.'
               },
               {
                 step_number: 4,
                 title: isEnglishQuestion ? 'Step 4: Intermediate Algebraic Simplification' : 'படி 4: இடைநிலை இயற்கணித சுருக்குதல்',
                 work: 'Perform arithmetic and algebraic operations step-by-step.',
+                how_it_came: 'எண்களை பெருக்கி, வகுத்து படிநிலையாக சுருக்குகிறோம்.',
                 marking_tip: isEnglishQuestion ? '1 Mark: Maintaining clear calculation lines.' : '1 மதிப்பெண்: ஒவ்வொரு வரியையும் தெளிவாக சுருக்குங்கள்.'
               },
               {
                 step_number: 5,
                 title: isEnglishQuestion ? 'Step 5: Reduce and Solve for Target Variable' : 'படி 5: தேவையான மதிப்பை கணக்கிடுதல்',
                 work: 'Isolate target unknown and compute exact value.',
+                how_it_came: 'கணக்கிட வேண்டிய மாறியை இடது புறம் கொண்டுவந்து அதன் சரியான விடையைப் பெறுகிறோம்.',
                 marking_tip: isEnglishQuestion ? '1 Mark: Isolating target value.' : '1 மதிப்பெண்: மதிப்பை தனிமைப்படுத்தி கணக்கிடுதல்.'
               },
               {
                 step_number: 6,
                 title: isEnglishQuestion ? 'Step 6: Mathematical Verification' : 'படி 6: சமன்பாட்டில் சரிபார்த்தல்',
                 work: 'Substitute computed value back into original statement (LHS = RHS ✓).',
+                how_it_came: 'வந்த விடையை மீண்டும் சமன்பாட்டில் பிரதியிட்டு சரிபார்க்கிறோம்.',
                 marking_tip: isEnglishQuestion ? '1 Mark: Verification ensures accuracy.' : '1 மதிப்பெண்: சரிபார்த்தல்.'
               },
               {
                 step_number: 7,
                 title: isEnglishQuestion ? 'Step 7: Arrive at Final Verified Answer' : 'படி 7: இறுதி விடை காணுதல்',
                 work: 'Computed Result (Boxed with standard units)',
+                how_it_came: 'சரிபார்க்கப்பட்ட இறுதி விடையை உரிய அலகுகளுடன் கட்டமிடுகிறோம்.',
                 marking_tip: isEnglishQuestion ? '1 Mark: Rectangular box around final answer.' : '1 மதிப்பெண்: இறுதி விடையை கட்டமிட்டு காட்டவும்.'
               }
             ],
             final_answer: 'Final Computed Result (Boxed)',
             exam_presentation_tip: isEnglishQuestion ? 'Maintain clear vertical alignment of equals signs (=) and draw a box around your final answer.' : 'சமம் குறிகளை நேராக வைத்து, இறுதி விடையை கட்டமிடுங்கள்.'
           },
-          ready_prompt: 'கரும்பலகையில் கேள்வியையும் சூத்திரத்தையும் எழுதியாச்சு! நாம் பாடத்தை தொடங்கலாமா?',
+          ready_prompt: 'கரும்பலகையில் வினாவையும் ஃபார்முலாவையும் எழுதியாச்சு! நாம் படிப்பதை தொடங்கலாமா?',
           teacher_dialogue: 'வணக்கம்! கரும்பலகையில தீர்வு எழுதியிருக்கேன். ஒவ்வொரு படியையும் பொறுமையாக கவனியுங்கள். தேர்வில் முழு மதிப்பெண் பெற ஸ்டெப்ஸ் ரொம்ப முக்கியம். ஆரம்பிக்கலாமா?',
           spoken_audio_script: 'வணக்கம்! கரும்பலகையில தீர்வு எழுதியிருக்கேன். தேர்வில் முழு மதிப்பெண் பெற ஸ்டெப்ஸ் ரொம்ப முக்கியம். ஆரம்பிக்கலாமா?'
         };
