@@ -717,7 +717,7 @@ function generateLocalExamQA(prompt, language = 'en') {
             : '',
 
           numerical_problem: isTamil
-            ? `**மாதிரி வினா மற்றும் படிநிலையான தீர்வு (Worked-Out Example Problem):**\n- **வினா:** ${title} அமைப்பில் ஆரம்ப மதிப்பு a = 10, வீதம் r = 2 மற்றும் படிநிலைகள் n = 4 எனில், n-வது படிநிலையின் இறுதி மதிப்பைக் கணக்கிடுக.\n- **ஃபார்முலா (Formula):** விடை = a + (n * r)\n- **படி 1:** கொடுக்கப்பட்டவை: a = 10, r = 2, n = 4\n- **படி 2:** கணக்கீடு: விடை = 10 + (4 * 2) = 10 + 8 = 18\n- **இறுதி விடை:** கணக்கிடப்பட்ட மதிப்பு = 18. தேர்வுக்கான முழு மதிப்பெண் தீர்வு.`
+            ? `**மாதிரி வினா மற்றும் படிநிலையான தீர்வு (Worked-Out Example Problem):**\n- **வினா:** ${title} அமைப்பில் ஆரம்ப மதிப்பு a = 10, வீதம் r = 2 மற்றும் படிநிலைகள் n = 4 எனில், n-வது படிநிலையின் இறுதி மதிப்பைக் கணக்கிடுக.\n- **சூத்திரம்:** விடை = a + (n * r)\n- **படி 1:** கொடுக்கப்பட்டவை: a = 10, r = 2, n = 4\n- **படி 2:** கணக்கீடு: விடை = 10 + (4 * 2) = 10 + 8 = 18\n- **இறுதி விடை:** கணக்கிடப்பட்ட மதிப்பு = 18. தேர்வுக்கான முழு மதிப்பெண் தீர்வு.`
             : `**Numerical / Example Problem & Step-by-Step Worked-Out Solution:**\n- **Problem Statement:** In an application of ${title}, calculate the resultant output given Base Parameter a = 100, Growth Factor r = 5, and Stage Count n = 4.\n- **Formula:** Result = a + (n * r)\n- **Step 1 (Parameter Substitution):** a = 100, r = 5, n = 4\n- **Step 2 (Computation):** Result = 100 + (4 * 5) = 100 + 20\n- **Result:** Verified Numerical Value = 120 units.`,
 
           tradeoffs_complexity: isTamil
@@ -1872,7 +1872,7 @@ router.post('/math-teacher-lesson', async (req, res) => {
                     role: 'user',
                     parts: [
                       { inlineData: { mimeType, data: cleanBase64 } },
-                      { text: 'Transcribe the exact mathematics question, problem statement, equations, formulas, numbers, variables, and any given answer or target proof from this photo. Output ONLY the raw transcribed mathematics, no conversational remarks.' }
+                      { text: 'Transcribe the exact mathematics question, problem statement, equations, formulas, numbers, variables, and any given answer or target proof from this photo. If the content is in Tamil, transcribe accurately in Tamil. If in English, transcribe in English. Output ONLY the raw transcribed mathematics, no conversational remarks.' }
                     ]
                   }
                 ],
@@ -1896,72 +1896,112 @@ router.post('/math-teacher-lesson', async (req, res) => {
       }
     }
 
-    if (!userText) {
-      userText = 'Solve: 2x² + 5x - 3 = 0';
+    // Determine target language strictly: if selectedLanguage/effectiveLang is 'ta' OR userText contains Tamil, strict Tamil lock applies!
+    const isTamil = (effectiveLang === 'ta' || req.body.language === 'ta' || /[\u0B80-\u0BFF]/.test(userText));
+    const isEnglishQuestion = !isTamil;
+
+    // NEVER guess or assume fake default equations like "2x² + 5x - 3 = 0"
+    if (!userText && !cleanBase64) {
+      return res.status(400).json({
+        success: false,
+        error: isTamil
+          ? 'பதிவேற்றப்பட்ட PDF அல்லது புகைப்படத்திலிருந்து கணக்கை வாசிக்க முடியவில்லை. தயவுசெய்து தெளிவான புகைப்படம்/PDF-ஐ பதிவேற்றவும் அல்லது உங்கள் வினாவை தட்டச்சு செய்யவும்.'
+          : 'Could not read a clear mathematical problem from the uploaded file or input. Please upload a clear photo/PDF or type your question.'
+      });
     }
 
-    const hasTamil = /[\u0B80-\u0BFF]/.test(userText);
-    const isEnglishQuestion = !hasTamil;
+    if (!userText && cleanBase64) {
+      userText = isTamil ? 'மாணவர் பதிவேற்றிய கணிதப் படம் / ஆவணம்' : 'Student uploaded math photo/document';
+    }
 
-    // LANGUAGE RULES AS REQUESTED:
-    // 1. If English question: Written blackboard is in English, explanation is in natural everyday spoken Tamil ("idhu eppadi vandhuchu").
-    // 2. If Tamil question: Written blackboard is in Tamil, explanation is in natural everyday spoken Tamil.
-    const boardLanguage = isEnglishQuestion ? 'English' : 'Tamil (தமிழ்)';
-
-    const systemInstruction = `You are the AI Math Teacher inside EDU Mind AI.
+    const systemInstruction = isTamil
+      ? `You are the AI Math Teacher inside EDU Mind AI.
 You write on a two-part classroom chalkboard.
 DO NOT OUTPUT SPEECH OR AUDIO. All explanations must be written out on the board for the student to read.
 
-CRITICAL INSTRUCTION: ZERO GENERIC DUMMY TEMPLATES!
-- Never output placeholder strings like "Uploaded Math File:", "Extracted parameters from problem statement", "Governing Formula & Mathematical Principles", or "Final Computed Result (Boxed)".
-- Solve the ACTUAL problem provided by the student with exact numbers, equations, and solutions!
+CRITICAL INSTRUCTION: 100% PURE TAMIL (தமிழ்) OUTPUT ONLY!
+The user has selected TAMIL mode.
+EVERY SINGLE WORD, TITLE, HEADING, EXPLANATION, AND LABEL MUST BE IN PURE TAMIL!
+- NEVER write English titles like "Mathematical Problem Solving", "Step 1: ...", "Problem Statement", "Given Data", "Governing Formula", "Direct Algebraic Formulation", "Final Computed Result", "1 Mark", or "Exam Presentation Tip"!
+- Replace them strictly with Tamil equivalents:
+  - Topic Title: "கணிதத் தீர்வு மற்றும் படிமுறை விளக்கம்"
+  - Step title: "படி 1: விவரங்கள் அறிதல்", "படி 2: ஃபார்முலா பிரதியிடுதல்", "படி 3: சுருக்குதல்", "படி 4: இறுதி விடை" (DO NOT write the English word "Step")
+  - Question label: "கணக்கு / வினா"
+  - Given data: "கொடுக்கப்பட்ட விவரங்கள்"
+  - Formula: "ஃபார்முலா / சமன்பாடு" (State the actual governing math formula or algebraic rule, NEVER archaic "சூத்திரம்", NEVER English text)
+  - Target answer: "இலக்கு விடை / நிரூபிக்க வேண்டியது"
+  - Final answer: "இறுதி விடை"
+  - Marking tip: "1 மதிப்பெண்", "2 மதிப்பெண்கள்" (NEVER "1 Mark")
+  - Exam presentation tip: "தேர்வுக்கான குறிப்பு" (In pure Tamil)
+  - "how_it_came": Explain in simple, natural, conversational spoken Tamil ("இது எப்படி வந்தது: மேலே உள்ள சமன்பாட்டில்...").
 
-TWO-PART SPLIT BOARD STRUCTURE:
-PART 1: Actual Problem Statement, Given Data, Governing Formula, and Target Answer to be Proven.
-PART 2: Complete Hand-Written Style Step-by-Step Proof and Derivation with "how each step came about" (இது எப்படி வந்தது).
-
-STRICT VOCABULARY & LANGUAGE RULES:
-1. STRICTLY ELIMINATE and NEVER use the archaic or obscure word "சூத்திரம்" ("Sooththiram").
-2. ALWAYS use everyday, student-friendly terms: "Formula" (ஃபார்முலா) or "சமன்பாடு" (Equation).
-3. ALWAYS use simple spoken/written everyday language: "விடை" (Answer), "வழிமுறை" (Method), "இது எப்படி வந்தது" (How it came about).
-4. IF user question/notes are in English:
-   - Written blackboard equations, question, given data, formula, and steps are in clear, university-standard English.
-   - The "how_it_came" field in each step is written in simple everyday conversational Tamil ("இது எப்படி வந்தது: மேலே உள்ள சமன்பாட்டில்...") so Tamil students immediately grasp how each step was derived!
-5. IF user question/notes are in Tamil:
-   - Both written equations and "how_it_came" explanations are in simple everyday Tamil.
-6. IF the user uploads a question that already includes the answer or target result to prove (e.g. "Prove that LHS = RHS", or question with target answer):
-   - In PART 1, set "target_answer" to that expected answer or result to be proven!
-   - In PART 2, provide the complete, uninterrupted step-by-step mathematical proof (6 to 10 granular steps) showing how to reach that target answer from the initial equation.
-7. FOR EVERY STEP IN "steps":
-   - "step_number": integer (1, 2, 3...)
-   - "title": brief title of the step
-   - "work": exact mathematical equation or algebraic operation in clean Unicode (NO raw LaTeX $ or \\).
-   - "how_it_came": clear explanation of why this step follows, what was substituted or factored, and how this result came about ("இது எப்படி வந்தது: ...").
-   - "marking_tip": exam mark breakdown (e.g. "1 Mark: Correct factorization").
+CRITICAL INSTRUCTION: ZERO GENERIC DUMMY TEMPLATES & SOLVE ACTUAL PROBLEM!
+- Solve the ACTUAL problem provided by the student in the question or image.
+- If the problem has a target answer or proof, show the complete step-by-step mathematical proof (6 to 10 steps) reaching that exact answer.
 
 Return ONLY a valid JSON object matching:
 {
   "greeting": "வணக்கம்! உங்கள் கணக்கை கரும்பலகையில் படிப்படியாக எழுதுகிறேன்.",
-  "detected_topic": "${isEnglishQuestion ? 'Topic Title in English' : 'Topic Title in Tamil'}",
+  "detected_topic": "கணிதத் தீர்வு",
+  "board_content": {
+    "question": "மாணவர் கேட்ட முழுக் கணக்கு",
+    "core_formula": "பொருத்தமான ஃபார்முலா / கணித சமன்பாடு",
+    "given_data": "கணக்கில் கொடுக்கப்பட்டுள்ள மதிப்புகள்",
+    "target_answer": "நிரூபிக்க வேண்டிய முடிவு அல்லது இலக்கு விடை",
+    "steps": [
+      {
+        "step_number": 1,
+        "title": "படி 1: படிநிலையின் தமிழ் தலைப்பு",
+        "work": "கணித சமன்பாடு மற்றும் எண்கள் (Unicode)",
+        "how_it_came": "இது எப்படி வந்தது: எளிய பேச்சுத் தமிழில் தெளிவான விளக்கம்",
+        "marking_tip": "1 மதிப்பெண்"
+      }
+    ],
+    "final_answer": "இறுதி விடை",
+    "exam_presentation_tip": "தேர்வுக்கான முக்கியக் குறிப்பு"
+  },
+  "ready_prompt": "கரும்பலகையில் வினாவையும் ஃபார்முலாவையும் எழுதியாச்சு!",
+  "teacher_dialogue": "தீர்வு கரும்பலகையில் தெளிவாக எழுதப்பட்டுள்ளது.",
+  "spoken_audio_script": ""
+}`
+      : `You are the AI Math Teacher inside EDU Mind AI.
+You write on a two-part classroom chalkboard.
+DO NOT OUTPUT SPEECH OR AUDIO. All explanations must be written out on the board for the student to read.
+
+CRITICAL INSTRUCTION: ZERO GENERIC DUMMY TEMPLATES!
+- Solve the ACTUAL problem provided by the student with exact numbers and equations.
+
+TWO-PART SPLIT BOARD STRUCTURE:
+PART 1: Actual Problem Statement, Given Data, Governing Formula (Formula / ஃபார்முலா, NOT சூத்திரம்), and Target Answer.
+PART 2: Complete Hand-Written Style Step-by-Step Proof and Derivation with "how each step was derived" (இது எப்படி வந்தது).
+
+LANGUAGE RULES FOR ENGLISH MODE:
+- Written blackboard equations, question, given data, formula, and step titles are in clean university-level English.
+- The "how_it_came" field in each step is written in simple everyday conversational Tamil ("இது எப்படி வந்தது: மேலே உள்ள சமன்பாட்டில்...") so Tamil-speaking students immediately grasp how each step was derived!
+
+Return ONLY a valid JSON object matching:
+{
+  "greeting": "Hello! I am writing your math solution on the chalkboard.",
+  "detected_topic": "Topic Title in English",
   "board_content": {
     "question": "Full problem statement",
-    "core_formula": "Governing Formula (Labeled as Formula / ஃபார்முலா, NOT சூத்திரம்)",
-    "given_data": "Extracted problem values and parameters",
+    "core_formula": "Governing Formula",
+    "given_data": "Extracted problem values",
     "target_answer": "Target answer or result to be proven",
     "steps": [
       {
         "step_number": 1,
         "title": "Clear step title",
         "work": "Detailed intermediate mathematical equation/working",
-        "how_it_came": "Simple conversational explanation of how this line was derived (இது எப்படி வந்தது: ...)",
-        "marking_tip": "University exam marking criteria"
+        "how_it_came": "இது எப்படி வந்தது: Simple conversational explanation",
+        "marking_tip": "1 Mark"
       }
     ],
     "final_answer": "Complete final boxed result",
     "exam_presentation_tip": "Tips on how to box and align work for maximum scoring"
   },
-  "ready_prompt": "கரும்பலகையில் வினாவையும் ஃபார்முலாவையும் எழுதியாச்சு!",
-  "teacher_dialogue": "Written explanation...",
+  "ready_prompt": "Solution is written on the chalkboard!",
+  "teacher_dialogue": "Solution is ready.",
   "spoken_audio_script": ""
 }`;
 
@@ -2002,6 +2042,7 @@ Return ONLY a valid JSON object matching:
       const isQuad = /quadratic|x\^?2|factoriz|root|இருபடி/i.test(userText);
       const isCalc = /derivative|dy\/dx|calculus|வகையீடு/i.test(userText);
       const isPyth = /pythagoras|hypotenuse|triangle|பித்தாகரஸ்/i.test(userText);
+      const isMatrix = /matrix|determinant|inverse|அணி/i.test(userText);
 
       if (isProb) {
         parsed = {
@@ -2282,48 +2323,48 @@ Return ONLY a valid JSON object matching:
         // Fallback for custom user questions: Parse the actual equation / values from userText
         const cleanQuestion = userText.replace(/^[\s\S]*?(?:Solve|Find|Evaluate|Calculate|Prove|\d+[\.\)])\s*/i, '').trim() || userText;
         parsed = {
-          greeting: 'வணக்கம்! உங்கள் கணக்கை கரும்பலகையில் படிப்படியாக எழுதுகிறேன்.',
-          detected_topic: isEnglishQuestion ? 'Mathematical Problem Solving' : 'கணிதத் தீர்வு',
+          greeting: isTamil ? 'வணக்கம்! உங்கள் கணக்கை கரும்பலகையில் படிப்படியாக எழுதுகிறேன்.' : 'Hello! I am writing the step-by-step solution on the chalkboard.',
+          detected_topic: isTamil ? 'கணிதத் தீர்வு' : 'Mathematical Problem Solving',
           board_content: {
             question: userText,
-            core_formula: 'Direct Algebraic Formulation',
+            core_formula: isTamil ? 'பொருத்தமான ஃபார்முலா / கணித சமன்பாடு' : 'Governing Mathematical Formula',
             given_data: cleanQuestion,
             target_answer: cleanQuestion,
             steps: [
               {
                 step_number: 1,
-                title: isEnglishQuestion ? 'Step 1: Problem Statement & Given Data' : 'படி 1: கொடுக்கப்பட்ட கணக்கு விவரங்கள்',
+                title: isTamil ? 'படி 1: கொடுக்கப்பட்ட கணக்கு விவரங்கள்' : 'Step 1: Problem Statement & Given Data',
                 work: cleanQuestion,
-                how_it_came: 'கொடுக்கப்பட்ட கணக்கை தெளிவாக கரும்பலகையில் வரிசைப்படுத்துகிறோம்.',
-                marking_tip: '1 Mark'
+                how_it_came: isTamil ? 'கொடுக்கப்பட்ட கணக்கை தெளிவாக கரும்பலகையில் வரிசைப்படுத்துகிறோம்.' : 'Arranging the problem statement on the board.',
+                marking_tip: isTamil ? '1 மதிப்பெண்' : '1 Mark'
               },
               {
                 step_number: 2,
-                title: isEnglishQuestion ? 'Step 2: Identify Governing Formula' : 'படி 2: உரிய ஃபார்முலாவை எழுதுதல்',
-                work: 'Identify relevant algebraic / mathematical rule for ' + cleanQuestion.slice(0, 40),
-                how_it_came: 'இந்த கணக்கிற்கு தேவையான கணித விதியை தேர்ந்தெடுக்கிறோம்.',
-                marking_tip: '1 Mark'
+                title: isTamil ? 'படி 2: உரிய ஃபார்முலாவை எழுதுதல்' : 'Step 2: Identify Governing Formula',
+                work: (isTamil ? 'பொருத்தமான ஃபார்முலா பிரதியிடுதல்: ' : 'Identify relevant algebraic rule for ') + cleanQuestion.slice(0, 40),
+                how_it_came: isTamil ? 'இந்த கணக்கிற்கு தேவையான கணித விதியை தேர்ந்தெடுக்கிறோம்.' : 'Applying the mathematical rule.',
+                marking_tip: isTamil ? '1 மதிப்பெண்' : '1 Mark'
               },
               {
                 step_number: 3,
-                title: isEnglishQuestion ? 'Step 3: Algebraic Simplification' : 'படி 3: இயற்கணித சுருக்குதல்',
-                work: cleanQuestion + '  (Step-by-step simplification)',
-                how_it_came: 'விதிகளின்படி சமன்பாட்டின் இருபுறமும் சுருக்குகிறோம்.',
-                marking_tip: '2 Marks'
+                title: isTamil ? 'படி 3: இயற்கணித சுருக்குதல்' : 'Step 3: Algebraic Simplification',
+                work: cleanQuestion + (isTamil ? '  (படிமுறை சுருக்குதல்)' : '  (Step-by-step simplification)'),
+                how_it_came: isTamil ? 'விதிகளின்படி சமன்பாட்டின் இருபுறமும் சுருக்குகிறோம்.' : 'Simplifying both sides according to algebraic rules.',
+                marking_tip: isTamil ? '2 மதிப்பெண்கள்' : '2 Marks'
               },
               {
                 step_number: 4,
-                title: isEnglishQuestion ? 'Step 4: Final Verified Result' : 'படி 4: இறுதி விடை',
+                title: isTamil ? 'படி 4: இறுதி விடை' : 'Step 4: Final Verified Result',
                 work: cleanQuestion,
-                how_it_came: 'சுருக்கிய விடையை சரிபார்த்து கட்டமிடுகிறோம்.',
-                marking_tip: '1 Mark'
+                how_it_came: isTamil ? 'சுருக்கிய விடையை சரிபார்த்து கட்டமிடுகிறோம்.' : 'Verifying and boxing the final result.',
+                marking_tip: isTamil ? '1 மதிப்பெண்' : '1 Mark'
               }
             ],
             final_answer: cleanQuestion,
-            exam_presentation_tip: 'Box the final answer and ensure intermediate working is neat.'
+            exam_presentation_tip: isTamil ? 'இறுதி விடையை கட்டமிட்டு, சமன் குறிகளை நேராக வரிசைப்படுத்துங்கள்.' : 'Box the final answer and ensure intermediate working is neat.'
           },
-          ready_prompt: 'கரும்பலகையில் வினாவையும் ஃபார்முலாவையும் எழுதியாச்சு!',
-          teacher_dialogue: 'தீர்வு கரும்பலகையில் தெளிவாக எழுதப்பட்டுள்ளது.',
+          ready_prompt: isTamil ? 'கரும்பலகையில் வினாவையும் ஃபார்முலாவையும் எழுதியாச்சு!' : 'Problem and formula written on chalkboard!',
+          teacher_dialogue: isTamil ? 'தீர்வு கரும்பலகையில் தெளிவாக எழுதப்பட்டுள்ளது.' : 'Solution is written on the chalkboard.',
           spoken_audio_script: ''
         };
       }
@@ -2338,40 +2379,44 @@ Return ONLY a valid JSON object matching:
 
   } catch (err) {
     console.error('Math teacher lesson error:', err);
+    const isTa = (effectiveLang === 'ta' || (req.body && req.body.language === 'ta'));
     return res.status(200).json({
       success: true,
-      greeting: 'வணக்கம்! நான் உங்கள் கணித ஆசிரியை. வாருங்கள், கணக்கை ஒன்றாக படிப்போம்!',
-      detected_topic: 'Mathematical Problem Solving',
+      greeting: isTa ? 'வணக்கம்! நான் உங்கள் கணித ஆசிரியை. கணக்கை கரும்பலகையில் படிப்படியாக தீர்க்கலாம்!' : "Hello! I'm your AI Math Teacher. Let's solve the problem step-by-step on the chalkboard!",
+      detected_topic: isTa ? 'கணிதத் தீர்வு' : 'Mathematical Problem Solving',
       board_content: {
-        question: 'Mathematical Problem',
-        core_formula: 'Standard Mathematical Formulation',
-        given_data: 'Given parameters',
+        question: userText || (isTa ? 'மாணவர் பதிவேற்றிய கணித வினா' : 'Uploaded Math Problem'),
+        core_formula: isTa ? 'பொருத்தமான கணித ஃபார்முலா' : 'Standard Mathematical Formulation',
+        given_data: isTa ? 'கொடுக்கப்பட்ட விவரங்கள்' : 'Given parameters',
         steps: [
           {
             step_number: 1,
-            title: 'Step 1: Write Given Parameters',
-            work: 'Extract given values clearly.',
-            marking_tip: '1 Mark for given data.'
+            title: isTa ? 'படி 1: விவரங்கள் அறிதல்' : 'Step 1: Write Given Parameters',
+            work: userText || (isTa ? 'கொடுக்கப்பட்ட வினாவை வரிசைப்படுத்துதல்' : 'Extract given values clearly.'),
+            how_it_came: isTa ? 'வினாவில் கொடுக்கப்பட்டுள்ள தரவுகளை முதலில் குறித்துக்கொள்கிறோம்.' : 'Noting down the problem statement and given values.',
+            marking_tip: isTa ? '1 மதிப்பெண்' : '1 Mark'
           },
           {
             step_number: 2,
-            title: 'Step 2: Formula Substitution',
-            work: 'Substitute values into formula.',
-            marking_tip: '2 Marks for substitution.'
+            title: isTa ? 'படி 2: ஃபார்முலா பிரதியிடுதல்' : 'Step 2: Formula Substitution',
+            work: isTa ? 'ஃபார்முலாவில் மதிப்புகளை பிரதியிடுதல்' : 'Substitute values into formula.',
+            how_it_came: isTa ? 'சரியான கணித ஃபார்முலாவை தேர்ந்தெடுத்து மதிப்புகளை பொருத்துகிறோம்.' : 'Applying the formula corresponding to the problem.',
+            marking_tip: isTa ? '2 மதிப்பெண்கள்' : '2 Marks'
           },
           {
             step_number: 3,
-            title: 'Step 3: Final Answer',
-            work: 'Solve and box the answer.',
-            marking_tip: '1 Mark for final value.'
+            title: isTa ? 'படி 3: இறுதி விடை' : 'Step 3: Final Answer',
+            work: isTa ? 'கணக்கீட்டின் இறுதி முடிவு' : 'Solve and box the answer.',
+            how_it_came: isTa ? 'சுருக்கிய விடையை சரிபார்த்து கட்டமிடுகிறோம்.' : 'Verifying and boxing the final result.',
+            marking_tip: isTa ? '1 மதிப்பெண்' : '1 Mark'
           }
         ],
-        final_answer: 'Verified Final Solution',
-        exam_presentation_tip: 'Draw a box around the final answer.'
+        final_answer: isTa ? 'சரிபார்க்கப்பட்ட தீர்வு' : 'Verified Final Solution',
+        exam_presentation_tip: isTa ? 'இறுதி விடையை கட்டமிட்டு, சமன் குறிகளை நேராக வரிசைப்படுத்துங்கள்.' : 'Draw a box around the final answer and keep steps neat.'
       },
-      ready_prompt: 'கரும்பலகையில் கேள்வியையும் சூத்திரத்தையும் எழுதியாச்சு! நாம் பாடத்தை தொடங்கலாமா?',
-      teacher_dialogue: 'வணக்கம்! நாம் இந்த கணக்கை மிக எளிமையாக ஸ்டெப் பை ஸ்டெப் தீர்க்கலாம். கரும்பலகையை பாருங்கள்!',
-      spoken_audio_script: 'வணக்கம்! நாம் இந்த கணக்கை மிக எளிமையாக தீர்க்கலாம். ஆரம்பிக்கலாமா?'
+      ready_prompt: isTa ? 'கரும்பலகையில் வினாவையும் ஃபார்முலாவையும் எழுதியாச்சு!' : 'Problem and formula written on chalkboard!',
+      teacher_dialogue: isTa ? 'தீர்வு கரும்பலகையில் தெளிவாக எழுதப்பட்டுள்ளது.' : 'Solution is written on the chalkboard.',
+      spoken_audio_script: ''
     });
   }
 });
