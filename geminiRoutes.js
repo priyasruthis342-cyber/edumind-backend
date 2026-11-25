@@ -1731,7 +1731,7 @@ router.post('/synthesize-speech', async (req, res) => {
  */
 router.post('/extract-image-text', async (req, res) => {
   try {
-    const { imageBase64, mimeType = 'image/jpeg' } = req.body || {};
+    const { imageBase64, mimeType = 'image/jpeg', language = 'en' } = req.body || {};
 
     if (!imageBase64 || typeof imageBase64 !== 'string') {
       return res.status(400).json({
@@ -1750,11 +1750,35 @@ router.post('/extract-image-text', async (req, res) => {
 
     const cleanBase64 = imageBase64.replace(/^data:[^;]+;base64,/, '');
 
+    const langDirectives = {
+      ta: `CRITICAL SCRIPT INSTRUCTION FOR TAMIL:
+- The text in this image is in TAMIL (தமிழ்) or bilingual Tamil/English.
+- Transcribe all Tamil handwriting and print strictly using TAMIL SCRIPT (தமிழ் எழுத்துக்கள்).
+- NEVER confuse Tamil cursive/letters with distorted Latin characters (e.g. NEVER output gibberish like '~7 LbLleINBerfledT...'). Write genuine Tamil words, math equations, and numbers.`,
+      ml: `CRITICAL SCRIPT INSTRUCTION FOR MALAYALAM:
+- The text in this image is in MALAYALAM (മലയാളം) or bilingual Malayalam/English.
+- Transcribe all Malayalam handwriting and print strictly using MALAYALAM SCRIPT.`,
+      hi: `CRITICAL SCRIPT INSTRUCTION FOR HINDI:
+- The text in this image is in HINDI (हिन्दी) or bilingual Hindi/English.
+- Transcribe all Hindi handwriting and print strictly using DEVANAGARI SCRIPT.`,
+      te: `CRITICAL SCRIPT INSTRUCTION FOR TELUGU:
+- The text in this image is in TELUGU (తెలుగు) or bilingual Telugu/English.
+- Transcribe all Telugu handwriting and print strictly using TELUGU SCRIPT.`,
+      kn: `CRITICAL SCRIPT INSTRUCTION FOR KANNADA:
+- The text in this image is in KANNADA (ಕನ್ನಡ) or bilingual Kannada/English.
+- Transcribe all Kannada handwriting and print strictly using KANNADA SCRIPT.`,
+      en: `The text is in English with standard mathematical notations and university syllabus/notes.`
+    };
+
+    const targetDirective = langDirectives[language] || langDirectives.en;
+
     const promptText = `You are an expert academic OCR and handwriting transcription engine for university students.
 Carefully inspect this image, which may contain:
 - Student handwritten notes (cursive, ballpoint pen, pencil, quick notebook writing, diagrams with labels, marginal annotations)
 - Printed textbook pages, syllabus outlines, question papers, mobile screenshots (WhatsApp, Instagram, Telegram), or digital notes
 - Mathematics problems, step-by-step proofs, formulas, equations, or exam questions in English, Tamil, Hindi, Telugu, Malayalam, Kannada.
+
+${targetDirective}
 
 TRANSCRIPTION INSTRUCTIONS:
 1. Accurately transcribe and reconstruct all readable handwritten notes, definitions, formulas, questions, target answers, code, bullet points, and headings.
@@ -2566,51 +2590,87 @@ async function handleSolveMath(req, res) {
     const isTamil = (language === 'ta' || /[\u0B80-\u0BFF]/.test(questionText));
 
     const teacherSystemPrompt = isTamil
-      ? `You are a friendly, patient maths teacher teaching school students in Tamil. Read the question from the image carefully.
-${isSimpler ? "CRITICAL: மாணவருக்கு முந்தைய விளக்கம் புரியவில்லை! கரும்பலகையை அழித்துவிட்டு, மிக மிக எளிய முறையில், நடைமுறை உதாரணம் அல்லது எளிய முறையில் விளக்குங்கள்." : ""}
-${cleanAnswerImg ? "மாணவர் தனது கையெழுத்து விடையையும் பதிவேற்றியுள்ளார். மாணவரின் விடையை கவனமாக சரிபார்த்து, எங்கு தவறு நடந்துள்ளது என்பதை அன்பாக சுட்டிக்காட்டி, சரியான வழியை விளக்குங்கள்." : ""}
+      ? `You are a friendly, patient female school teacher teaching mathematics to school students in Tamil Nadu.
+You speak in NORMAL, EVERYDAY CASUAL SPOKEN TAMIL (பேச்சுத் தமிழ்), exactly how a real teacher talks to students in a classroom.
+DO NOT use literary, formal, or textbook Tamil (no archaic words like "சூத்திரம்", "நிரூபிக்க", "கண்டறிக"). Keep sentences short, warm, and natural.
+Always write the spoken explanation in casual spoken Tamil, not literary Tamil. Keep it short and friendly.
+Use everyday conversational phrases:
+- "சரி பசங்களா, இப்போ இந்த கணக்கைப் பார்க்கலாம்."
+- "இங்க கவனிங்க..."
+- "இது இப்படி வந்துச்சு பாருங்க..."
+- "ரொம்ப ஈஸி தான்!"
+- "இப்போ புரிஞ்சுதா?"
 
-கற்பித்தல் விதிமுறைகள்:
-1. மாணவர்களை அன்புடன் வரவேற்று தொடங்குங்கள்: "வாருங்கள் மாணவச் செல்வங்களே, இன்றைய கணக்கைப் பார்க்கலாம்."
-2. முதலில் வினா என்ன கேட்கிறது, எதைக் கண்டுபிடிக்க அல்லது நிரூபிக்க வேண்டும் என்பதை எளிய தமிழில் விளக்குங்கள்.
-3. பின்னர் படிப்படியாக கரும்பலகையில் தீருங்கள். ஒவ்வொரு படிக்கும் (step) எளிய வாய்மொழி விளக்கமும் (explanation), கரும்பலகை கணக்கீடும் (board) இருக்க வேண்டும்.
-4. கணித சமன்பாடுகள், குறியீடுகள் அனைத்தையும் KaTeX / LaTeX வடிவில் (எ.கா: $x^2 + 5x - 3 = 0$, $\\frac{a}{b}$, $\\sqrt{x}$) எழுதுங்கள்.
-5. இறுதி விடையை தெளிவாக அடையுங்கள். இறுதி விடையை கட்டமிட்டு குறிப்பிடுங்கள்.
-6. முடிவில், "மாணவர்களே, இந்த கணக்கு உங்களுக்குப் புரிந்ததா?" என்று கேளுங்கள்.
+${isSimpler ? "CRITICAL: மாணவருக்கு முந்தைய விளக்கம் புரியவில்லை! கரும்பலகையை அழித்துவிட்டு, மிக மிக எளிய முறையில், அன்றாட வாழ்க்கையின் எளிய உதாரணத்தை வைத்து விளக்குங்கள்." : ""}
+${cleanAnswerImg ? "மாணவர் தனது சொந்த கையெழுத்து விடையையும் இணைத்துள்ளார். மாணவரின் விடையை கவனமாக சோதித்து, விடை சரியா அல்லது எங்கு சிறிய தவறு நடந்தது என்பதை அன்பாகச் சொல்லுங்கள்." : ""}
+
+TEACHING RULES:
+1. "questionTitle": Transcribe the exact question from the image in clear Tamil/maths numbers.
+2. "intro": Short spoken greeting and explanation of what the question asks (2 sentences in friendly casual spoken Tamil).
+3. "userFeedback": If the student uploaded an answer, provide friendly feedback: { "hasUserAnswer": true, "isCorrect": true/false, "feedback": "அன்பான ஆசிரியர் விளக்கம்..." }. If no answer uploaded, set hasUserAnswer: false.
+4. "steps": Solve step by step (3 to 6 steps). Double check and verify all mathematical calculations carefully by substitution or re-calculation before returning, so the answer is always correct!
+   - "speech": What the female teacher speaks aloud in casual spoken Tamil. Keep it short and friendly. End with a transition like "இது இப்படி வந்துச்சு பாருங்க".
+   - "board": What she writes on the board. Format all mathematical equations, variables, and numbers with LaTeX syntax ($...$ or $$...$$) so KaTeX renders them cleanly.
+5. "finalAnswer": Clearly state the verified final answer with units (e.g. "$x = 4$", "$b = 12\\text{ cm}$").
+6. "understoodPrompt": "புரிஞ்சுதா பசங்களா?"
 
 Return ONLY a valid JSON object matching:
 {
-  "intro": "ஆசிரியரின் அன்பான வரவேற்பு மற்றும் கணக்கின் எளிய விளக்கம்",
+  "questionTitle": "கணக்கின் முழு வினா",
+  "intro": "சரி பசங்களா, இன்னைக்கு நாம இந்த கணக்கைப் பார்க்கலாம்...",
+  "userFeedback": {
+    "hasUserAnswer": false,
+    "isCorrect": false,
+    "feedback": ""
+  },
   "steps": [
     {
-      "explanation": "இந்த படியின் எளிய தமிழ் விளக்கம்",
-      "board": "கரும்பலகை கணித கணக்கீடு (LaTeX வடிவில்)"
+      "speech": "முதல்ல ஃபார்முலாவை எழுதிக்கலாம். இங்க பாருங்க...",
+      "board": "$a^2 + b^2 = c^2$"
     }
   ],
-  "finalAnswer": "தெளிவான இறுதி விடை"
+  "finalAnswer": "$b = 12\\text{ cm}$",
+  "understoodPrompt": "புரிஞ்சுதா பசங்களா?"
 }`
-      : `You are a friendly, patient maths teacher teaching school students. Read the question from the image carefully.
-${isSimpler ? "CRITICAL: The student clicked NOT UNDERSTOOD! Erase the board and explain the same problem again in a much SIMPLER way, using an easy real-world analogy, visual concept, or simpler arithmetic steps." : ""}
-${cleanAnswerImg ? "The student also uploaded their own written answer. Check their work carefully, kindly point out where any mistake is, and show the correct method." : ""}
+      : `You are a friendly, patient female school teacher teaching mathematics to school students.
+You speak in a warm, friendly, natural everyday spoken tone. Keep sentences short, engaging, and easy for school students to follow.
+Phrases to use:
+- "Come students, let's look at today's question."
+- "Look here..."
+- "Here is how this step came about..."
+- "See how simple that is!"
+- "Did you understand?"
 
-Teaching guidelines:
-1. Start by greeting the students, like: "Come students, let's look at today's question."
-2. First, explain what the question is asking in simple words, and what we need to prove or find.
-3. Then solve it step by step. Each step must have a short spoken explanation and the written working for the board.
-4. Continue until the final answer is reached. Clearly mark the final answer.
-5. In the board working, format mathematical equations and symbols in standard LaTeX / KaTeX (e.g., $x^2 + 5x - 3 = 0$, $\\frac{a}{b}$, $\\sqrt{x}$, etc.) so they render properly.
-6. At the end, ask: "Did you understand?"
+${isSimpler ? "CRITICAL: The student did not understand! Erase the board and explain in a much simpler way with an easy everyday analogy or simpler arithmetic." : ""}
+${cleanAnswerImg ? "The student also uploaded their own written answer. Inspect it carefully, kindly point out if it is correct or exactly where any mistake occurred." : ""}
 
-Return ONLY a valid JSON object matching this exact schema:
+TEACHING RULES:
+1. "questionTitle": Transcribe the exact mathematical question from the image.
+2. "intro": Short spoken intro explaining what the question asks and what we need to find (2 friendly sentences).
+3. "userFeedback": If student uploaded an answer: { "hasUserAnswer": true, "isCorrect": true/false, "feedback": "Kind feedback..." }. If no answer uploaded, set hasUserAnswer: false.
+4. "steps": Solve step by step (3 to 6 steps). Double-check and verify all calculations carefully by substitution or re-calculation!
+   - "speech": What the female teacher speaks aloud in simple, conversational English. Keep it short and friendly.
+   - "board": What she writes on the chalkboard. Format mathematical equations with LaTeX syntax ($...$ or $$...$$) for KaTeX.
+5. "finalAnswer": Clearly stated verified final answer.
+6. "understoodPrompt": "Did you understand?"
+
+Return ONLY a valid JSON object matching:
 {
-  "intro": "Warm teacher greeting and simple explanation of what the question asks and what we need to find",
+  "questionTitle": "Full problem statement",
+  "intro": "Come students, let's look at today's question. We need to find...",
+  "userFeedback": {
+    "hasUserAnswer": false,
+    "isCorrect": false,
+    "feedback": ""
+  },
   "steps": [
     {
-      "explanation": "Short spoken explanation of this step in simple words",
-      "board": "Maths working for this step using LaTeX formatting for formulas"
+      "speech": "First let's write down the governing formula. Look here...",
+      "board": "$a^2 + b^2 = c^2$"
     }
   ],
-  "finalAnswer": "Clearly marked final verified answer"
+  "finalAnswer": "$b = 12\\text{ cm}$",
+  "understoodPrompt": "Did you understand?"
 }`;
 
     const parts = [];
@@ -2679,42 +2739,58 @@ Return ONLY a valid JSON object matching this exact schema:
 
     if (!parsed || !Array.isArray(parsed.steps) || parsed.steps.length === 0) {
       parsed = {
+        questionTitle: questionText || (isTamil ? "கணித வினா" : "Mathematics Problem"),
         intro: isTamil
-          ? "வணக்கம் மாணவச் செல்வங்களே! வாருங்கள், இந்த கணித வினாவை கரும்பலகையில் படிப்படியாக தீர்க்கலாம்."
-          : "Come students, let's look at today's question. We will break it down step-by-step.",
+          ? "சரி பசங்களா, வாருங்கள் இந்த கணக்கைப் பார்க்கலாம். கரும்பலகையில படிப்படியா தீர்க்கலாம்."
+          : "Come students, let's look at today's question. We will solve it step by step.",
+        userFeedback: {
+          hasUserAnswer: !!cleanAnswerImg,
+          isCorrect: false,
+          feedback: cleanAnswerImg
+            ? (isTamil ? "உங்கள் விடையை கவனித்தேன், இப்போது சரியான தீர்வு முறையை ஒன்றாகப் பார்க்கலாம்." : "I checked your working. Let us now solve it step by step together.")
+            : ""
+        },
         steps: [
           {
-            explanation: isTamil
-              ? "முதலில் கணக்கில் கொடுக்கப்பட்டுள்ள விவரங்களை கரும்பலகையில் குறித்துக்கொள்வோம்."
+            speech: isTamil
+              ? "முதல்ல கணக்குல கொடுத்திருக்கிற விவரங்களை கரும்பலகையில எழுதிக்கலாம்."
               : "First, let us write down what is given in the problem statement.",
-            board: questionText || "Given: Mathematical Problem Data"
+            board: questionText || "Given: Problem statement and parameters"
           },
           {
-            explanation: isTamil
-              ? "இப்போது இதற்குப் பொருத்தமான கணித விதியை பயன்படுத்தி கணக்கீடு செய்வோம்."
-              : "Now we apply the governing mathematical formula and simplify.",
+            speech: isTamil
+              ? "இப்போ பொருத்தமான ஃபார்முலாவை பயன்படுத்தி சுருக்குவோம். இங்க பாருங்க, இது இப்படி வந்துச்சு."
+              : "Now we apply the governing mathematical formula and simplify. Here is how this step came about.",
             board: "\\text{Formula: } \\text{Substitute known variables into standard equation.}"
           },
           {
-            explanation: isTamil
-              ? "மதிப்புகளை சுருக்கி இறுதி விடையைக் காண்போம்."
-              : "Simplifying the expressions gives the final solution.",
-            board: "\\text{Result: } \\text{Verified algebraic solution.}"
+            speech: isTamil
+              ? "மதிப்புகளை சுருக்கி இறுதி விடையை அடைந்துவிட்டோம். இதுதான் சரியான விடை."
+              : "Simplifying the expressions gives our final boxed result.",
+            board: "\\text{Final Result: Verified Solution}"
           }
         ],
-        finalAnswer: isTamil ? "சரிபார்க்கப்பட்ட இறுதி விடை" : "Verified Final Solution"
+        finalAnswer: isTamil ? "சரிபார்க்கப்பட்ட இறுதி விடை" : "Verified Final Solution",
+        understoodPrompt: isTamil ? "புரிஞ்சுதா பசங்களா?" : "Did you understand?"
       };
     }
 
     return res.status(200).json(sanitizeObjectMath({
       success: true,
       provider: 'ai-math-teacher',
-      intro: parsed.intro || "Come students, let's look at today's question.",
+      questionTitle: parsed.questionTitle || questionText || (isTamil ? "கணித வினா" : "Maths Question"),
+      intro: parsed.intro || (isTamil ? "சரி பசங்களா, இப்போ இந்த கணக்கைப் பார்க்கலாம்." : "Come students, let's look at today's question."),
+      userFeedback: parsed.userFeedback || {
+        hasUserAnswer: !!cleanAnswerImg,
+        isCorrect: false,
+        feedback: ""
+      },
       steps: parsed.steps.map(s => ({
-        explanation: s.explanation || '',
+        speech: s.speech || s.explanation || '',
         board: s.board || ''
       })),
-      finalAnswer: parsed.finalAnswer || ''
+      finalAnswer: parsed.finalAnswer || '',
+      understoodPrompt: parsed.understoodPrompt || (isTamil ? "புரிஞ்சுதா பசங்களா?" : "Did you understand?")
     }));
 
   } catch (err) {
@@ -2728,5 +2804,6 @@ Return ONLY a valid JSON object matching this exact schema:
 
 router.post('/solve', handleSolveMath);
 router.handleSolveMath = handleSolveMath;
+router.synthesizeNeuralSpeech = synthesizeNeuralSpeech;
 
 module.exports = router;

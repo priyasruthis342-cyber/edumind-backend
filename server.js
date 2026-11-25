@@ -413,6 +413,24 @@ app.use('/api/gemini', geminiRoutes);
 // Dedicated Whiteboard AI Math Teacher Solver Endpoint
 app.post('/api/solve', geminiRoutes.handleSolveMath);
 
+// Dedicated Text-to-Speech Endpoint for AI Math Teacher (Female Voice)
+app.post('/api/tts', async (req, res) => {
+  try {
+    const { text, language = 'ta', rate, pitch } = req.body || {};
+    if (!text || typeof text !== 'string' || !text.trim()) {
+      return res.status(400).json({ success: false, error: 'text is required' });
+    }
+    const audioBuffer = await geminiRoutes.synthesizeNeuralSpeech({ text, language, rate, pitch });
+    res.setHeader('Content-Type', 'audio/mpeg');
+    res.setHeader('Content-Length', audioBuffer.length);
+    res.setHeader('Cache-Control', 'public, max-age=86400, immutable');
+    return res.end(audioBuffer);
+  } catch (err) {
+    console.warn('TTS warning:', err.message);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // ─────────────────────────────────────────────
 // Razorpay Payment Routes (Test API Integration)
 // ─────────────────────────────────────────────
